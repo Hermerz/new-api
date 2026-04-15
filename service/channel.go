@@ -13,6 +13,28 @@ import (
 	"github.com/QuantumNous/new-api/types"
 )
 
+// updateActiveKeysMetric refreshes MetricActiveKeysCount from DB.
+// Non-fatal: errors are silently ignored.
+func updateActiveKeysMetric() {
+	var count int64
+	if err := model.DB.Model(&model.Channel{}).
+		Where("status = ?", common.ChannelStatusEnabled).
+		Count(&count).Error; err != nil {
+		return
+	}
+	MetricActiveKeysCount.Set(float64(count))
+
+	// Alert if count dropped below threshold (Story 4.7).
+	threshold := KeyPoolAlertThreshold()
+	if count < threshold {
+		msg := fmt.Sprintf(
+			"[ZetaAPI 告警] Key 池可用渠道数量（%d）已低于告警阈值（%d），请及时补充 API Key！",
+			count, threshold,
+		)
+		SendWeChatWorkAlert(msg)
+	}
+}
+
 func formatNotifyType(channelId int, status int) string {
 	return fmt.Sprintf("%s_%d_%d", dto.NotifyTypeChannelUpdate, channelId, status)
 }
@@ -32,6 +54,8 @@ func DisableChannel(channelError types.ChannelError, reason string) {
 		subject := fmt.Sprintf("通道「%s」（#%d）已被禁用", channelError.ChannelName, channelError.ChannelId)
 		content := fmt.Sprintf("通道「%s」（#%d）已被禁用，原因：%s", channelError.ChannelName, channelError.ChannelId, reason)
 		NotifyRootUser(formatNotifyType(channelError.ChannelId, common.ChannelStatusAutoDisabled), subject, content)
+		// AR8: update active_keys_count metric + WeChat Work threshold alert (Story 4.7).
+		updateActiveKeysMetric()
 	}
 }
 
@@ -41,6 +65,8 @@ func EnableChannel(channelId int, usingKey string, channelName string) {
 		subject := fmt.Sprintf("通道「%s」（#%d）已被启用", channelName, channelId)
 		content := fmt.Sprintf("通道「%s」（#%d）已被启用", channelName, channelId)
 		NotifyRootUser(formatNotifyType(channelId, common.ChannelStatusEnabled), subject, content)
+		// AR8: update active_keys_count metric (Story 4.7).
+		updateActiveKeysMetric()
 	}
 }
 
