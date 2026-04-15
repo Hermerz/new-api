@@ -197,6 +197,18 @@ func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams)
 		gopool.Go(func() {
 			LogQuotaData(userId, username, params.ModelName, params.Quota, common.GetTimestamp(), params.PromptTokens+params.CompletionTokens)
 		})
+		gopool.Go(func() {
+			cacheTokens := 0
+			if v, ok := params.Other["cache_tokens"]; ok {
+				switch ct := v.(type) {
+				case int:
+					cacheTokens = ct
+				case float64:
+					cacheTokens = int(ct)
+				}
+			}
+			LogUserCacheStats(userId, username, params.ModelName, params.PromptTokens, cacheTokens, params.CompletionTokens, common.GetTimestamp())
+		})
 	}
 }
 

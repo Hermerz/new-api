@@ -34,6 +34,36 @@ func validUserInfo(username string, role int) bool {
 }
 
 func authHelper(c *gin.Context, minRole int) {
+	// X-Hermes-Token fast path: HermesTokenAuth already validated the JWT and
+	// injected hermes_user_id. Bypass session/token check entirely.
+	if hermesUID := GetHermesUserID(c); hermesUID != 0 {
+		user, err := model.GetUserById(hermesUID, false)
+		if err != nil || user == nil {
+			c.JSON(http.StatusUnauthorized, gin.H{"success": false, "message": "hermes: user not found"})
+			c.Abort()
+			return
+		}
+		if user.Status == common.UserStatusDisabled {
+			c.JSON(http.StatusOK, gin.H{"success": false, "message": common.TranslateMessage(c, i18n.MsgAuthUserBanned)})
+			c.Abort()
+			return
+		}
+		if user.Role < minRole {
+			c.JSON(http.StatusOK, gin.H{"success": false, "message": common.TranslateMessage(c, i18n.MsgAuthInsufficientPrivilege)})
+			c.Abort()
+			return
+		}
+		c.Header("Auth-Version", "864b7076dbcd0a3c01b5520316720ebf")
+		c.Set("username", user.Username)
+		c.Set("role", user.Role)
+		c.Set("id", user.Id)
+		c.Set("group", user.Group)
+		c.Set("user_group", user.Group)
+		c.Set("use_access_token", false)
+		c.Next()
+		return
+	}
+
 	session := sessions.Default(c)
 	username := session.Get("username")
 	role := session.Get("role")

@@ -148,6 +148,25 @@ func GetLogsSelfStat(c *gin.Context) {
 	return
 }
 
+// GetUserCacheStatsSelf returns the caller's cache hit stats for a given time range.
+// GET /api/log/self/cache_stats?start_timestamp=&end_timestamp=
+func GetUserCacheStatsSelf(c *gin.Context) {
+	userId := c.GetInt("id")
+	startTimestamp, _ := strconv.ParseInt(c.Query("start_timestamp"), 10, 64)
+	endTimestamp, _ := strconv.ParseInt(c.Query("end_timestamp"), 10, 64)
+
+	stats, err := model.GetUserCacheStatsByUserId(userId, startTimestamp, endTimestamp)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "",
+		"data":    stats,
+	})
+}
+
 func DeleteHistoryLogs(c *gin.Context) {
 	targetTimestamp, _ := strconv.ParseInt(c.Query("target_timestamp"), 10, 64)
 	if targetTimestamp == 0 {
