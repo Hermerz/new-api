@@ -331,6 +331,13 @@ func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 		logger.LogError(ctx, "error settling billing: "+err.Error())
 	}
 
+	// AR6: publish billing event to Redis for Hermes WebSocket pipeline.
+	PublishBillingEvent(relayInfo.UserId, summary.ModelName, summary.PromptTokens, summary.CompletionTokens, summary.Quota)
+	// AR8: record Prometheus metrics.
+	RecordRelayRequest(summary.ModelName, "success",
+		time.Since(relayInfo.StartTime).Seconds(),
+		summary.PromptTokens, summary.CompletionTokens)
+
 	logModel := summary.ModelName
 	if strings.HasPrefix(logModel, "gpt-4-gizmo") {
 		logModel = "gpt-4-gizmo-*"

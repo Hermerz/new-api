@@ -826,7 +826,8 @@ func CreateUser(c *gin.Context) {
 		Username:    user.Username,
 		Password:    user.Password,
 		DisplayName: user.DisplayName,
-		Role:        user.Role, // 保持管理员设置的角色
+		Email:       user.Email, // allow admin API to set email (needed for Hermes internal user creation)
+		Role:        user.Role,  // 保持管理员设置的角色
 	}
 	if err := cleanUser.Insert(0); err != nil {
 		common.ApiError(c, err)
