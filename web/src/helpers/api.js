@@ -26,10 +26,15 @@ import {
 import axios from 'axios';
 import { MESSAGE_ROLES } from '../constants/playground.constants';
 
+// Hermes fork: fall back to Vite's BASE_URL (set by `base` in vite.config.js) so
+// API calls inherit the /newapi-admin/ prefix automatically and re-enter through
+// the Hermes ingress, which strips it before forwarding to new-api.
+const resolvedBaseURL =
+  import.meta.env.VITE_REACT_APP_SERVER_URL ||
+  (import.meta.env.BASE_URL ? import.meta.env.BASE_URL.replace(/\/$/, '') : '');
+
 export let API = axios.create({
-  baseURL: import.meta.env.VITE_REACT_APP_SERVER_URL
-    ? import.meta.env.VITE_REACT_APP_SERVER_URL
-    : '',
+  baseURL: resolvedBaseURL,
   headers: {
     'New-API-User': getUserIdFromLocalStorage(),
     'Cache-Control': 'no-store',
@@ -82,9 +87,7 @@ patchAPIInstance(API);
 
 export function updateAPI() {
   API = axios.create({
-    baseURL: import.meta.env.VITE_REACT_APP_SERVER_URL
-      ? import.meta.env.VITE_REACT_APP_SERVER_URL
-      : '',
+    baseURL: resolvedBaseURL,
     headers: {
       'New-API-User': getUserIdFromLocalStorage(),
       'Cache-Control': 'no-store',

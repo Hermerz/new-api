@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -91,6 +92,20 @@ func Login(c *gin.Context) {
 
 // setup session & cookies and then return user info
 func setupLogin(user *model.User, c *gin.Context) {
+	// When HERMES_ADMIN_SSO_ONLY=true, admin accounts may only sign in via the
+	// /api/user/hermes-sso bridge (which sets c.hermes_sso=true before returning a redirect
+	// — it does NOT call this function). Every other login path (password, 2FA, passkey,
+	// OAuth) funnels through setupLogin, so gating here covers them all.
+	if user.Role >= common.RoleAdminUser &&
+		os.Getenv("HERMES_ADMIN_SSO_ONLY") == "true" &&
+		!c.GetBool("hermes_sso") {
+		c.JSON(http.StatusForbidden, gin.H{
+			"success": false,
+			"message": "admin accounts must sign in via Hermes console (SSO)",
+		})
+		return
+	}
+
 	session := sessions.Default(c)
 	session.Set("id", user.Id)
 	session.Set("username", user.Username)

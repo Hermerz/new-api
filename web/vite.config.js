@@ -25,7 +25,11 @@ import { codeInspectorPlugin } from 'code-inspector-plugin';
 const { vitePluginSemi } = pkg;
 
 // https://vitejs.dev/config/
+// Hermes fork: the admin UI is always served behind /newapi-admin/ (Hermes ingress
+// strips the prefix before forwarding). Setting base here emits asset URLs with
+// the prefix so the browser re-enters through ingress correctly.
 export default defineConfig({
+  base: process.env.VITE_BASE_PATH || '/newapi-admin/',
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),
