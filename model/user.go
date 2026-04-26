@@ -50,6 +50,8 @@ type User struct {
 	Setting          string         `json:"setting" gorm:"type:text;column:setting"`
 	Remark           string         `json:"remark,omitempty" gorm:"type:varchar(255)" validate:"max=255"`
 	StripeCustomer   string         `json:"stripe_customer" gorm:"type:varchar(64);column:stripe_customer;index"`
+	CreatedAt        int64          `json:"created_time" gorm:"column:created_at;autoCreateTime"`
+	UpdatedAt        int64          `json:"updated_time" gorm:"column:updated_at;autoUpdateTime"`
 }
 
 func (user *User) ToBaseUser() *UserBase {
