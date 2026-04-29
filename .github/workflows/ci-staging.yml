@@ -1,8 +1,8 @@
-name: CI - Staging
+name: CI - Staging / Prod
 
 on:
   push:
-    branches: [staging]
+    branches: [staging, hermes-main]
   workflow_dispatch:
 
 jobs:
@@ -27,11 +27,19 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Compute image tags
+        run: |
+          TAGS="ghcr.io/${{ env.GHCR_OWNER }}/new-api-official:${{ github.sha }}"
+          if [ "${{ github.ref_name }}" = "staging" ]; then
+            TAGS="${TAGS},ghcr.io/${{ env.GHCR_OWNER }}/new-api-official:staging"
+          elif [ "${{ github.ref_name }}" = "hermes-main" ]; then
+            TAGS="${TAGS},ghcr.io/${{ env.GHCR_OWNER }}/new-api-official:latest"
+          fi
+          echo "IMAGE_TAGS=${TAGS}" >> $GITHUB_ENV
+
       - name: Build and push
         uses: docker/build-push-action@v5
         with:
           context: .
           push: true
-          tags: |
-            ghcr.io/${{ env.GHCR_OWNER }}/new-api-official:${{ github.sha }}
-            ghcr.io/${{ env.GHCR_OWNER }}/new-api-official:staging
+          tags: ${{ env.IMAGE_TAGS }}
