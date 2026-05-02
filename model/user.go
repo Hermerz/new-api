@@ -532,8 +532,13 @@ func (user *User) Edit(updatePassword bool) error {
 	}
 
 	DB.First(&user, user.Id)
+	oldGroup := user.Group
 	if err = DB.Model(user).Updates(updates).Error; err != nil {
 		return err
+	}
+
+	if newUser.Group != "" && newUser.Group != oldGroup {
+		DB.Model(&Token{}).Where("user_id = ?", newUser.Id).Update("group", newUser.Group)
 	}
 
 	// Update cache
