@@ -629,7 +629,7 @@ func AdminClearUserBinding(c *gin.Context) {
 		return
 	}
 
-	model.RecordLog(user.Id, model.LogTypeManage, fmt.Sprintf("admin cleared %s binding for user %s", bindingType, user.Username))
+	model.RecordManageLog(c, user.Id, fmt.Sprintf("cleared %s binding for user %s", bindingType, user.Username))
 
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
@@ -938,8 +938,8 @@ func ManageUser(c *gin.Context) {
 				common.ApiError(c, err)
 				return
 			}
-			model.RecordLog(user.Id, model.LogTypeManage,
-				fmt.Sprintf("管理员增加用户额度 %s", logger.LogQuota(req.Value)))
+			model.RecordManageLog(c, user.Id,
+				fmt.Sprintf("增加用户额度 %s", logger.LogQuota(req.Value)))
 		case "subtract":
 			if req.Value <= 0 {
 				common.ApiErrorI18n(c, i18n.MsgUserQuotaChangeZero)
@@ -949,16 +949,16 @@ func ManageUser(c *gin.Context) {
 				common.ApiError(c, err)
 				return
 			}
-			model.RecordLog(user.Id, model.LogTypeManage,
-				fmt.Sprintf("管理员减少用户额度 %s", logger.LogQuota(req.Value)))
+			model.RecordManageLog(c, user.Id,
+				fmt.Sprintf("减少用户额度 %s", logger.LogQuota(req.Value)))
 		case "override":
 			oldQuota := user.Quota
 			if err := model.DB.Model(&model.User{}).Where("id = ?", user.Id).Update("quota", req.Value).Error; err != nil {
 				common.ApiError(c, err)
 				return
 			}
-			model.RecordLog(user.Id, model.LogTypeManage,
-				fmt.Sprintf("管理员覆盖用户额度从 %s 为 %s", logger.LogQuota(oldQuota), logger.LogQuota(req.Value)))
+			model.RecordManageLog(c, user.Id,
+				fmt.Sprintf("覆盖用户额度从 %s 为 %s", logger.LogQuota(oldQuota), logger.LogQuota(req.Value)))
 		default:
 			common.ApiErrorI18n(c, i18n.MsgInvalidParams)
 			return

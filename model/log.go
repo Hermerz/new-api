@@ -72,6 +72,15 @@ func GetLogByTokenId(tokenId int) (logs []*Log, err error) {
 	return logs, err
 }
 
+// RecordManageLog records a type=3 manage log, automatically prepending the
+// acting admin's ID and username extracted from the gin context.
+func RecordManageLog(c *gin.Context, targetUserId int, content string) {
+	adminId := c.GetInt("id")
+	adminName := c.GetString("username")
+	enriched := fmt.Sprintf("[管理员 %s(#%d)] %s", adminName, adminId, content)
+	RecordLog(targetUserId, LogTypeManage, enriched)
+}
+
 func RecordLog(userId int, logType int, content string) {
 	if logType == LogTypeConsume && !common.LogConsumeEnabled {
 		return
