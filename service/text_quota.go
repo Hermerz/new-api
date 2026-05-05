@@ -332,7 +332,8 @@ func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 	}
 
 	// AR6: publish billing event to Redis for Hermes WebSocket pipeline.
-	PublishBillingEvent(relayInfo.UserId, summary.ModelName, summary.PromptTokens, summary.CompletionTokens, summary.Quota)
+	PublishBillingEvent(relayInfo.UserId, summary.ModelName, summary.PromptTokens, summary.CompletionTokens,
+		summary.CacheTokens, cacheWriteTokensTotal(summary), summary.Quota)
 	// AR8: record Prometheus metrics.
 	RecordRelayRequest(summary.ModelName, "success",
 		time.Since(relayInfo.StartTime).Seconds(),

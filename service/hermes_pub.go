@@ -17,19 +17,25 @@ import (
 const hermesPubKeyPrefix = "ws:pub:"
 
 // BillingEvent is the payload published to Redis after each successful settlement.
+// All token counts are integers; Quota uses the same internal unit as wallet balance
+// (500000 quota = $1) — NOT a money amount in USD/CNY.
 type BillingEvent struct {
 	UserID           int    `json:"user_id"`
 	Model            string `json:"model"`
 	PromptTokens     int    `json:"prompt_tokens"`
 	CompletionTokens int    `json:"completion_tokens"`
 	TotalTokens      int    `json:"total_tokens"`
-	Cost             int    `json:"cost"` // quota units (same scale as wallet balance)
+	CacheReadTokens  int    `json:"cache_read_tokens"`
+	CacheWriteTokens int    `json:"cache_write_tokens"`
+	Quota            int    `json:"quota"` // quota units consumed (same scale as wallet balance)
 	Timestamp        int64  `json:"timestamp"`
 }
 
 // PublishBillingEvent publishes a billing event to Redis asynchronously.
 // Non-fatal: errors are logged but do not affect the billing result.
-func PublishBillingEvent(userID int, model string, promptTokens, completionTokens, cost int) {
+// For non-text relays without token semantics (mjproxy, violation_fee), pass 0 for token args.
+// `quota` is the quota unit consumed by this request (NOT money — see BillingEvent doc).
+func PublishBillingEvent(userID int, model string, promptTokens, completionTokens, cacheReadTokens, cacheWriteTokens, quota int) {
 	if common.RDB == nil {
 		return
 	}
@@ -39,7 +45,9 @@ func PublishBillingEvent(userID int, model string, promptTokens, completionToken
 		PromptTokens:     promptTokens,
 		CompletionTokens: completionTokens,
 		TotalTokens:      promptTokens + completionTokens,
-		Cost:             cost,
+		CacheReadTokens:  cacheReadTokens,
+		CacheWriteTokens: cacheWriteTokens,
+		Quota:            quota,
 		Timestamp:        time.Now().UnixMilli(),
 	}
 	gopool.Go(func() {

@@ -228,6 +228,7 @@ func RelaySwapFace(c *gin.Context, info *relaycommon.RelayInfo) *dto.MidjourneyR
 			if err != nil {
 				common.SysLog("error consuming token remain quota: " + err.Error())
 			}
+			service.PublishBillingEvent(info.UserId, modelName, 0, 0, 0, 0, priceData.Quota)
 
 			tokenName := c.GetString("token_name")
 			logContent := fmt.Sprintf("模型固定价格 %.2f，分组倍率 %.2f，操作 %s", priceData.ModelPrice, priceData.GroupRatioInfo.GroupRatio, constant.MjActionSwapFace)
@@ -535,6 +536,7 @@ func RelayMidjourneySubmit(c *gin.Context, relayInfo *relaycommon.RelayInfo) *dt
 			if err != nil {
 				common.SysLog("error consuming token remain quota: " + err.Error())
 			}
+			service.PublishBillingEvent(relayInfo.UserId, modelName, 0, 0, 0, 0, priceData.Quota)
 			tokenName := c.GetString("token_name")
 			logContent := fmt.Sprintf("模型固定价格 %.2f，分组倍率 %.2f，操作 %s，ID %s", priceData.ModelPrice, priceData.GroupRatioInfo.GroupRatio, midjRequest.Action, midjResponse.Result)
 			other := service.GenerateMjOtherInfo(relayInfo, priceData)
