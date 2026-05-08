@@ -17,8 +17,9 @@ import (
 )
 
 const (
-	wsReadTimeout   = 30 * time.Second
-	maxBufSize      = 1 << 20 // 1 MiB
+	wsReadTimeout    = 30 * time.Second
+	wsMaxRequestTime = 10 * time.Minute // Max time for entire request lifecycle
+	maxBufSize       = 1 << 20          // 1 MiB
 )
 
 // wsResponseWriter intercepts SSE writes (from gin's c.Render) and forwards
@@ -137,11 +138,19 @@ func RelayResponsesWS(c *gin.Context) {
 	// Watch for client disconnect — cancel upstream request so we don't keep
 	// consuming and billing tokens for a stream nobody receives. Started after
 	// the request read so there is only ever one ReadMessage in flight.
-	ctx, cancel := context.WithCancel(c.Request.Context())
+	ctx, cancel := context.WithTimeout(c.Request.Context(), wsMaxRequestTime)
 	defer cancel()
 	go func() {
-		ws.ReadMessage() // blocks until disconnect or follow-up message
-		cancel()
+		defer cancel()
+		for {
+			_, _, err := ws.ReadMessage()
+			if err != nil {
+				// Client disconnected or connection error
+				logger.LogError(c, "ws client disconnected: "+err.Error())
+				return
+			}
+			// Ignore any follow-up messages from client (control frames, etc.)
+		}
 	}()
 	c.Request = c.Request.WithContext(ctx)
 
