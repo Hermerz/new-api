@@ -2,13 +2,17 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"embed"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
 	"strconv"
 	"strings"
+	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -183,6 +187,22 @@ func main() {
 	InjectUmamiAnalytics()
 	InjectGoogleAnalytics()
 
+	// Hermerz/Hermes#28 PR2a-2: graceful shutdown gate. /health serves
+	// as the kubelet readinessProbe target (manifests in
+	// Hermerz/Hermes:infra/k8s/base/new-api/official-deployment.yaml
+	// hit /health). On SIGTERM we flip ready to false so the endpoint
+	// goes Unready before the listener stops accepting connections.
+	// Registered before SetRouter so it wins the routing match.
+	var ready atomic.Bool
+	ready.Store(true)
+	server.GET("/health", func(c *gin.Context) {
+		if !ready.Load() {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"status": "shutting-down"})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"status": "ok"})
+	})
+
 	// 设置路由
 	router.SetRouter(server, buildFS, indexPage)
 	var port = os.Getenv("PORT")
@@ -193,9 +213,40 @@ func main() {
 	// Log startup success message
 	common.LogStartupSuccess(startTime, port)
 
-	err = server.Run(":" + port)
-	if err != nil {
-		common.FatalLog("failed to start HTTP server: " + err.Error())
+	// Run the HTTP server with graceful shutdown (#28 PR2a-2). new-api
+	// transports streaming AI responses, so SIGTERM that just kills
+	// the process severs in-flight long connections — clients see
+	// connection reset / 502. The shutdown sequence:
+	//   1. flip ready=false → /health starts returning 503
+	//   2. sleep 5s so the kubelet probe (period=5s, threshold=3) and
+	//      kube-proxy converge on the new endpoint set; PR2a-1's
+	//      preStop sleep 5 in the manifest gives a second guarantee
+	//   3. server.Shutdown(25s) drains in-flight streaming requests
+	//   4. close DB / Redis (model.CloseDB runs via deferred main)
+	srv := &http.Server{
+		Addr:    ":" + port,
+		Handler: server,
+	}
+
+	go func() {
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			common.FatalLog("failed to start HTTP server: " + err.Error())
+		}
+	}()
+
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	<-quit
+	common.SysLog("shutdown: signal received, flipping /health to 503")
+
+	ready.Store(false)
+	time.Sleep(5 * time.Second)
+
+	common.SysLog("shutdown: draining in-flight HTTP requests (25s)")
+	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
+	defer cancel()
+	if err := srv.Shutdown(ctx); err != nil {
+		common.SysLog(fmt.Sprintf("shutdown: server.Shutdown returned %v (continuing cleanup)", err))
 	}
 }
 
