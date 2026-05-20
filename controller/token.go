@@ -357,3 +357,65 @@ func GetTokenKeysBatch(c *gin.Context) {
 	}
 	common.ApiSuccess(c, gin.H{"keys": keysMap})
 }
+
+// AdminListUserTokens — list tokens for an arbitrary user. Differs from
+// GetAllTokens in that the user id comes from the path (admin viewing
+// someone else's tokens) rather than the caller's session.
+func AdminListUserTokens(c *gin.Context) {
+	uid, err := strconv.Atoi(c.Param("id"))
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	pageInfo := common.GetPageQuery(c)
+	tokens, err := model.GetAllUserTokens(uid, pageInfo.GetStartIdx(), pageInfo.GetPageSize())
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	total, _ := model.CountUserTokens(uid)
+	pageInfo.SetTotal(int(total))
+	pageInfo.SetItems(buildMaskedTokenResponses(tokens))
+	common.ApiSuccess(c, pageInfo)
+}
+
+// AdminUpdateTokenGroup — update only the group field of a specific token
+// for a specific user. Used by Hermes admin to pin KA tokens to dedicated
+// channel pools (e.g. reverse-fpg-xxx) without touching name / quota / etc.
+// The existing UpdateToken endpoint is scoped to the caller's own user id
+// (c.GetInt("id")), so admin needs a parallel path-scoped variant.
+func AdminUpdateTokenGroup(c *gin.Context) {
+	uid, err := strconv.Atoi(c.Param("id"))
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	tid, err := strconv.Atoi(c.Param("tid"))
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	var body struct {
+		Group string `json:"group"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	if body.Group == "" {
+		common.ApiErrorMsg(c, "group is required")
+		return
+	}
+
+	token, err := model.GetTokenByIds(tid, uid)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	token.Group = body.Group
+	if err := token.Update(); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	common.ApiSuccess(c, buildMaskedTokenResponse(token))
+}

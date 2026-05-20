@@ -133,6 +133,12 @@ func SetApiRouter(router *gin.Engine) {
 				// Admin 2FA routes
 				adminRoute.GET("/2fa/stats", controller.Admin2FAStats)
 				adminRoute.DELETE("/:id/2fa", controller.AdminDisable2FA)
+
+				// Admin per-user token routes — used by Hermes admin
+				// console to assign KA-specific groups to individual
+				// tokens (channel routing + billing tier override).
+				adminRoute.GET("/:id/tokens", controller.AdminListUserTokens)
+				adminRoute.PUT("/:id/tokens/:tid/group", controller.AdminUpdateTokenGroup)
 			}
 		}
 
