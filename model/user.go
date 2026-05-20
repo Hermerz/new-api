@@ -538,7 +538,15 @@ func (user *User) Edit(updatePassword bool) error {
 	}
 
 	if newUser.Group != "" && newUser.Group != oldGroup {
-		DB.Model(&Token{}).Where("user_id = ?", newUser.Id).Update("group", newUser.Group)
+		// Only cascade tokens that still match the user's previous group.
+		// Tokens that an admin has re-grouped (e.g. KA customer routed to
+		// a specific channel pool) keep their group — billing also follows
+		// token.group, so cascading would silently void the customization.
+		// `group` is a reserved word — use commonGroupCol (resolves to the
+		// correct quoting per DB driver, see model/main.go).
+		DB.Model(&Token{}).
+			Where("user_id = ? AND "+commonGroupCol+" = ?", newUser.Id, oldGroup).
+			Update("group", newUser.Group)
 	}
 
 	// Update cache
