@@ -2487,6 +2487,8 @@
     "选择过期时间（可选，留空为永久）": "选择过期时间（可选，留空为永久）",
     "选择部署位置（可多选）": "选择部署位置（可多选）",
     "透传请求体": "透传请求体",
+    "发送 X-Hermes-End-User": "发送 X-Hermes-End-User",
+    "上游为 FGP-C2API 时勾选 — 加 X-Hermes-End-User header（sha256(user_id) 前 16 字符）让 FGP 做 per-end-user session masking。直连上游不要勾。": "上游为 FGP-C2API 时勾选 — 加 X-Hermes-End-User header（sha256(user_id) 前 16 字符）让 FGP 做 per-end-user session masking。直连上游不要勾。",
     "通义千问": "通义千问",
     "通用设置": "通用设置",
     "通知": "通知",

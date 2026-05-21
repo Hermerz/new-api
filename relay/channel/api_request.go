@@ -2,11 +2,14 @@ package channel
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -484,6 +487,17 @@ func DoRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
 	return doRequest(c, req, info)
 }
 func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http.Response, error) {
+	// FGP-C2API#55: per-end-user hint for upstream session-id masking.
+	// Opt-in per channel because direct upstreams (Anthropic / OpenAI) would
+	// otherwise see the hash as a fingerprint dimension. Hint =
+	// first 16 hex chars of sha256(user_id); 64-bit entropy is plenty for
+	// keying a per-account cache. Skip when UserId == 0 (channel test,
+	// system probe, etc.) so internal calls don't pollute the masking cache.
+	if info.ChannelSetting.SendHermesEndUserHeader && info.UserId > 0 {
+		sum := sha256.Sum256([]byte(strconv.Itoa(info.UserId)))
+		req.Header.Set("X-Hermes-End-User", hex.EncodeToString(sum[:])[:16])
+	}
+
 	var client *http.Client
 	var err error
 	if info.ChannelSetting.Proxy != "" {

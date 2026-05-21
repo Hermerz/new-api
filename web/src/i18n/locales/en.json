@@ -3249,6 +3249,8 @@
     "选择预设...": "Select preset...",
     "选择预设模板（可选）": "Select Preset Template (optional)",
     "透传请求体": "Pass through body",
+    "发送 X-Hermes-End-User": "Send X-Hermes-End-User",
+    "上游为 FGP-C2API 时勾选 — 加 X-Hermes-End-User header（sha256(user_id) 前 16 字符）让 FGP 做 per-end-user session masking。直连上游不要勾。": "Enable when upstream is FGP-C2API — sends X-Hermes-End-User header (first 16 chars of sha256(user_id)) so FGP can do per-end-user session masking. Do NOT enable for direct upstreams.",
     "递归": "Recursive",
     "递归策略": "Recursion Strategy",
     "通义千问": "Qwen",

@@ -7,6 +7,14 @@ type ChannelSettings struct {
 	PassThroughBodyEnabled bool   `json:"pass_through_body_enabled,omitempty"`
 	SystemPrompt           string `json:"system_prompt,omitempty"`
 	SystemPromptOverride   bool   `json:"system_prompt_override,omitempty"`
+	// SendHermesEndUserHeader: when true, add X-Hermes-End-User header
+	// (first 16 hex chars of sha256(user_id)) on outbound requests to this
+	// channel's upstream. FGP-C2API uses it as a second-dimension cache key
+	// for session-id masking, preventing per-account session collapse when
+	// multiple Hermes users hit the same FGP account concurrently. See
+	// Hermerz/FGP-C2API#55. Default false — direct upstreams (Anthropic /
+	// OpenAI) would otherwise see this fingerprint dimension too.
+	SendHermesEndUserHeader bool `json:"send_hermes_end_user_header,omitempty"`
 }
 
 type VertexKeyType string
