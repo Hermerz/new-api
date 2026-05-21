@@ -5,10 +5,92 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/QuantumNous/new-api/dto"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
+
+func TestApplyHermesEndUserHeader_OptInWithValidUserSetsHeader(t *testing.T) {
+	t.Parallel()
+
+	req := httptest.NewRequest(http.MethodPost, "https://upstream.example/v1/messages", nil)
+	info := &relaycommon.RelayInfo{
+		UserId: 1,
+		ChannelMeta: &relaycommon.ChannelMeta{
+			ChannelSetting: dto.ChannelSettings{
+				SendHermesEndUserHeader: true,
+			},
+		},
+	}
+
+	applyHermesEndUserHeader(req, info)
+
+	// sha256("1") = 6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b
+	require.Equal(t, "6b86b273ff34fce1", req.Header.Get("X-Hermes-End-User"))
+}
+
+func TestApplyHermesEndUserHeader_OptInWithNonPositiveUserSkipsHeader(t *testing.T) {
+	t.Parallel()
+
+	for _, uid := range []int{0, -1} {
+		req := httptest.NewRequest(http.MethodPost, "https://upstream.example/v1/messages", nil)
+		info := &relaycommon.RelayInfo{
+			UserId: uid,
+			ChannelMeta: &relaycommon.ChannelMeta{
+				ChannelSetting: dto.ChannelSettings{
+					SendHermesEndUserHeader: true,
+				},
+			},
+		}
+
+		applyHermesEndUserHeader(req, info)
+		require.Empty(t, req.Header.Get("X-Hermes-End-User"),
+			"channel test / system probe (UserId=%d) must not pollute upstream masking cache", uid)
+	}
+}
+
+func TestApplyHermesEndUserHeader_OptOutSkipsHeader(t *testing.T) {
+	t.Parallel()
+
+	req := httptest.NewRequest(http.MethodPost, "https://upstream.example/v1/messages", nil)
+	info := &relaycommon.RelayInfo{
+		UserId: 42,
+		ChannelMeta: &relaycommon.ChannelMeta{
+			ChannelSetting: dto.ChannelSettings{
+				SendHermesEndUserHeader: false,
+			},
+		},
+	}
+
+	applyHermesEndUserHeader(req, info)
+	require.Empty(t, req.Header.Get("X-Hermes-End-User"),
+		"direct upstreams must not see the fingerprint dimension when opt-out")
+}
+
+func TestApplyHermesEndUserHeader_DifferentUsersGetDifferentHints(t *testing.T) {
+	t.Parallel()
+
+	hint := func(uid int) string {
+		req := httptest.NewRequest(http.MethodPost, "https://upstream.example/v1/messages", nil)
+		info := &relaycommon.RelayInfo{
+			UserId: uid,
+			ChannelMeta: &relaycommon.ChannelMeta{
+				ChannelSetting: dto.ChannelSettings{
+					SendHermesEndUserHeader: true,
+				},
+			},
+		}
+		applyHermesEndUserHeader(req, info)
+		return req.Header.Get("X-Hermes-End-User")
+	}
+
+	a := hint(1)
+	b := hint(2)
+	require.NotEqual(t, a, b, "different users must hash to different hints")
+	require.Len(t, a, 16, "hint must be exactly 16 hex chars (64-bit)")
+	require.Equal(t, a, hint(1), "same user must produce stable hint across requests")
+}
 
 func TestProcessHeaderOverride_ChannelTestSkipsPassthroughRules(t *testing.T) {
 	t.Parallel()

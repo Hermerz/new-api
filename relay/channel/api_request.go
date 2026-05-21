@@ -486,17 +486,25 @@ func sendPingData(c *gin.Context, mutex *sync.Mutex) error {
 func DoRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http.Response, error) {
 	return doRequest(c, req, info)
 }
-func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http.Response, error) {
-	// FGP-C2API#55: per-end-user hint for upstream session-id masking.
-	// Opt-in per channel because direct upstreams (Anthropic / OpenAI) would
-	// otherwise see the hash as a fingerprint dimension. Hint =
-	// first 16 hex chars of sha256(user_id); 64-bit entropy is plenty for
-	// keying a per-account cache. Skip when UserId == 0 (channel test,
-	// system probe, etc.) so internal calls don't pollute the masking cache.
-	if info.ChannelSetting.SendHermesEndUserHeader && info.UserId > 0 {
-		sum := sha256.Sum256([]byte(strconv.Itoa(info.UserId)))
-		req.Header.Set("X-Hermes-End-User", hex.EncodeToString(sum[:])[:16])
+
+// applyHermesEndUserHeader injects X-Hermes-End-User on req when the channel
+// has opted in and a real end-user is present. See FGP-C2API#55.
+//
+// Opt-in per channel because direct upstreams (Anthropic / OpenAI) would
+// otherwise see the hash as a fingerprint dimension. Hint =
+// first 16 hex chars of sha256(user_id); 64-bit entropy is plenty for
+// keying a per-account cache. Skip when UserId == 0 (channel test,
+// system probe, etc.) so internal calls don't pollute the masking cache.
+func applyHermesEndUserHeader(req *http.Request, info *common.RelayInfo) {
+	if !info.ChannelSetting.SendHermesEndUserHeader || info.UserId <= 0 {
+		return
 	}
+	sum := sha256.Sum256([]byte(strconv.Itoa(info.UserId)))
+	req.Header.Set("X-Hermes-End-User", hex.EncodeToString(sum[:])[:16])
+}
+
+func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http.Response, error) {
+	applyHermesEndUserHeader(req, info)
 
 	var client *http.Client
 	var err error
