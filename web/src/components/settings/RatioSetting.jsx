@@ -23,6 +23,7 @@ import { useTranslation } from 'react-i18next';
 
 import ModelPricingCombined from '../../pages/Setting/Ratio/ModelPricingCombined';
 import GroupRatioSettings from '../../pages/Setting/Ratio/GroupRatioSettings';
+import UserGroupModelDiscountSettings from '../../pages/Setting/Ratio/UserGroupModelDiscountSettings';
 import ModelRatioNotSetEditor from '../../pages/Setting/Ratio/ModelRationNotSetEditor';
 import UpstreamRatioSync from '../../pages/Setting/Ratio/UpstreamRatioSync';
 
@@ -101,6 +102,9 @@ const RatioSetting = () => {
           </Tabs.TabPane>
           <Tabs.TabPane tab={t('分组相关设置')} itemKey='group'>
             <GroupRatioSettings options={inputs} refresh={onRefresh} />
+          </Tabs.TabPane>
+          <Tabs.TabPane tab={t('用户分组折扣')} itemKey='user_group_discount'>
+            <UserGroupModelDiscountSettings options={inputs} refresh={onRefresh} />
           </Tabs.TabPane>
           <Tabs.TabPane tab={t('未设置价格模型')} itemKey='unset_models'>
             <ModelRatioNotSetEditor options={inputs} refresh={onRefresh} />
