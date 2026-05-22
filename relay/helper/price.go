@@ -103,6 +103,26 @@ func ModelPriceHelper(c *gin.Context, info *relaycommon.RelayInfo, promptTokens 
 		imageRatio, _ = ratio_setting.GetImageRatio(info.OriginModelName)
 		audioRatio = ratio_setting.GetAudioRatio(info.OriginModelName)
 		audioCompletionRatio = ratio_setting.GetAudioCompletionRatio(info.OriginModelName)
+		// User-group × model discount layer (Hermerz/Hermes#51 / Hermerz/new-api#3).
+		//
+		// Baked into modelRatio BEFORE PriceData is populated below — this way the
+		// settle path in service/text_quota.go reads the already-discounted
+		// ModelRatio from relayInfo.PriceData without needing its own copy of the
+		// discount logic. Pre-consume and settle stay arithmetically identical.
+		//
+		// info.UserGroup is the customer's tier (e.g. "default"=2C, "enterprise"=2B);
+		// NOT info.UsingGroup which is the channel-routing group selected for this
+		// request. Unconfigured groups/models return discount=1.0 → no-op, billing
+		// identical to pre-feature behavior.
+		//
+		// Trade-off: logs / billing records will show the discounted modelRatio
+		// rather than the raw market baseline. If observability of "original vs
+		// discounted" is needed later, lift the discount into a dedicated
+		// PriceData.Discount field and re-multiply at settle time.
+		if discount, ok := ratio_setting.GetUserGroupModelDiscount(info.UserGroup, info.OriginModelName); ok {
+			modelRatio = modelRatio * discount
+		}
+
 		ratio := modelRatio * groupRatioInfo.GroupRatio
 		preConsumedQuota = int(float64(preConsumedTokens) * ratio)
 	} else {
