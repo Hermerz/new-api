@@ -107,6 +107,15 @@ func PreWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usag
 	audioOutTokens := usage.OutputTokenDetails.AudioTokens
 	groupRatio := ratio_setting.GetGroupRatio(relayInfo.UsingGroup)
 	modelRatio, _, _ := ratio_setting.GetModelRatio(modelName)
+	// Apply user-group × model discount (Hermerz/Hermes#51 / Hermerz/new-api#3).
+	// Mirrors the bake-in pattern from ModelPriceHelper (relay/helper/price.go).
+	// Without this, WSS pre-consume reserves at full ModelRatio while settle reads
+	// PriceData.ModelRatio (already discounted via ModelPriceHelper) → quota
+	// over-reservation. Net cost balances at settle refund, but during the session
+	// users near their balance ceiling hit false "quota exceeded" rejects.
+	if discount, ok := ratio_setting.GetUserGroupModelDiscount(relayInfo.UserGroup, modelName); ok {
+		modelRatio = modelRatio * discount
+	}
 
 	autoGroup, exists := common.GetContextKey(ctx, constant.ContextKeyAutoGroup)
 	if exists {
