@@ -77,6 +77,7 @@ func ModelPriceHelper(c *gin.Context, info *relaycommon.RelayInfo, promptTokens 
 	var audioRatio float64
 	var audioCompletionRatio float64
 	var freeModel bool
+	var appliedUserGroupDiscount float64 // 0 means none applied; non-zero = the raw discount factor (e.g. 0.2)
 	if !usePrice {
 		preConsumedTokens := common.Max(promptTokens, common.PreConsumedQuota)
 		if meta.MaxTokens != 0 {
@@ -105,22 +106,31 @@ func ModelPriceHelper(c *gin.Context, info *relaycommon.RelayInfo, promptTokens 
 		audioCompletionRatio = ratio_setting.GetAudioCompletionRatio(info.OriginModelName)
 		// User-group × model discount layer (Hermerz/Hermes#51 / Hermerz/new-api#3).
 		//
-		// Baked into modelRatio BEFORE PriceData is populated below — this way the
-		// settle path in service/text_quota.go reads the already-discounted
-		// ModelRatio from relayInfo.PriceData without needing its own copy of the
-		// discount logic. Pre-consume and settle stay arithmetically identical.
+		// Semantic (per #51 Phase 1, option A): the discount value entered by BD
+		// = "final fraction of model official price". When set, it BYPASSES the
+		// per-user-group GroupRatio entirely — final billing ratio = ModelRatio
+		// × discount, regardless of GroupRatio. This matches BD's mental model:
+		// "0.2 in admin UI = customer pays 2折 of OpenAI/Anthropic official price".
 		//
-		// info.UserGroup is the customer's tier (e.g. "default"=2C, "enterprise"=2B);
-		// NOT info.UsingGroup which is the channel-routing group selected for this
-		// request. Unconfigured groups/models return discount=1.0 → no-op, billing
-		// identical to pre-feature behavior.
+		// Lookup key: info.UserGroup (= user.Group, the user's home tier).
+		// NOT info.UsingGroup. Rationale (per #51 spec + #66 colleague review):
+		//   - #51 命题 = "客户分层 × 模型"，客户分层 = user 维度
+		//   - #51 显式排除"单 key 级别折扣覆盖" → multi-key 多 group 场景属于
+		//     该 punt 的需求，不在本期 scope
+		//   - autoGroup 是路由概念，不应该影响计费语义；用 UserGroup 完全
+		//     规避 autoGroup 边缘 case
 		//
-		// Trade-off: logs / billing records will show the discounted modelRatio
-		// rather than the raw market baseline. If observability of "original vs
-		// discounted" is needed later, lift the discount into a dedicated
-		// PriceData.Discount field and re-multiply at settle time.
+		// Unconfigured (group, model) pairs return discount=1.0 → no-op, billing
+		// falls back to ModelRatio × GroupRatio (pre-feature behavior).
+		//
+		// Trade-off: logs / billing records for matched requests will show
+		// modelRatio = ModelRatio × discount and GroupRatio = 1.0. Settle path
+		// in service/text_quota.go reads PriceData.GroupRatioInfo.GroupRatio so
+		// its arithmetic stays consistent with pre-consume.
 		if discount, ok := ratio_setting.GetUserGroupModelDiscount(info.UserGroup, info.OriginModelName); ok {
 			modelRatio = modelRatio * discount
+			groupRatioInfo.GroupRatio = 1.0
+			appliedUserGroupDiscount = discount
 		}
 
 		ratio := modelRatio * groupRatioInfo.GroupRatio
@@ -166,6 +176,7 @@ func ModelPriceHelper(c *gin.Context, info *relaycommon.RelayInfo, promptTokens 
 		CacheCreation5mRatio: cacheCreationRatio5m,
 		CacheCreation1hRatio: cacheCreationRatio1h,
 		QuotaToPreConsume:    preConsumedQuota,
+		UserGroupDiscount:    appliedUserGroupDiscount,
 	}
 
 	if common.DebugEnabled {

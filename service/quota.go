@@ -107,15 +107,6 @@ func PreWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usag
 	audioOutTokens := usage.OutputTokenDetails.AudioTokens
 	groupRatio := ratio_setting.GetGroupRatio(relayInfo.UsingGroup)
 	modelRatio, _, _ := ratio_setting.GetModelRatio(modelName)
-	// Apply user-group × model discount (Hermerz/Hermes#51 / Hermerz/new-api#3).
-	// Mirrors the bake-in pattern from ModelPriceHelper (relay/helper/price.go).
-	// Without this, WSS pre-consume reserves at full ModelRatio while settle reads
-	// PriceData.ModelRatio (already discounted via ModelPriceHelper) → quota
-	// over-reservation. Net cost balances at settle refund, but during the session
-	// users near their balance ceiling hit false "quota exceeded" rejects.
-	if discount, ok := ratio_setting.GetUserGroupModelDiscount(relayInfo.UserGroup, modelName); ok {
-		modelRatio = modelRatio * discount
-	}
 
 	autoGroup, exists := common.GetContextKey(ctx, constant.ContextKeyAutoGroup)
 	if exists {
@@ -129,6 +120,32 @@ func PreWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usag
 	if ok {
 		actualGroupRatio = userGroupRatio
 	}
+
+	// Apply user-group × model discount (Hermerz/Hermes#51 / Hermerz/new-api#3).
+	// Option A: discount value = "final fraction of model official price"; when
+	// set, it BYPASSES GroupRatio entirely. Lookup keyed by relayInfo.UserGroup
+	// (= user.Group, NOT UsingGroup) per #51 spec + #66 colleague review:
+	// 客户分层 = user 维度，不让路由 autoGroup 影响计费语义。Applied AFTER all
+	// GroupRatio computation so the override is unconditional. See
+	// relay/helper/price.go for full rationale.
+	if discount, ok := ratio_setting.GetUserGroupModelDiscount(relayInfo.UserGroup, modelName); ok {
+		modelRatio = modelRatio * discount
+		actualGroupRatio = 1.0
+		relayInfo.PriceData.UserGroupDiscount = discount
+	}
+
+	// Sync the recomputed ratios back to relayInfo.PriceData so
+	// PostWssConsumeQuota (which reads PriceData.ModelRatio +
+	// PriceData.GroupRatioInfo.GroupRatio for settle + log) uses the SAME
+	// values as pre-consume. Without this sync, if autoGroup re-routed
+	// between ModelPriceHelper and now, settle would use stale
+	// pre-autoGroup ratios while pre-consume reserved at post-autoGroup
+	// rate. Pre-existing WSS bug surfaced by Codex cross-model review of
+	// the discount layer PR; fix-in-place here is minimal and addresses
+	// both the original asymmetry and the new partial-update (only
+	// UserGroupDiscount was being written) introduced earlier in this PR.
+	relayInfo.PriceData.ModelRatio = modelRatio
+	relayInfo.PriceData.GroupRatioInfo.GroupRatio = actualGroupRatio
 
 	quotaInfo := QuotaInfo{
 		InputDetails: TokenDetails{

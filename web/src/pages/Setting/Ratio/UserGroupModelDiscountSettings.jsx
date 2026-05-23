@@ -106,7 +106,7 @@ export default function UserGroupModelDiscountSettings(props) {
         </Typography.Title>
         <Paragraph type='tertiary' style={{ marginBottom: 12 }}>
           {t(
-            '在全局 ModelRatio 之上为每个用户分组的每个模型再叠一层折扣，用于客户分层差异化定价（如 2C 默认分组享更深折扣，2B 企业分组按更高价计费）。',
+            '为「用户分组 × 模型」设置精细化折扣。该折扣 = 客户最终对模型官方价的折扣比例（如 0.2 = 客户调用此模型按官方价 2 折扣费），适用于 2C / 2B 客户分层差异化定价。',
           )}
         </Paragraph>
         <Paragraph type='tertiary' style={{ marginBottom: 12 }}>
@@ -124,13 +124,13 @@ export default function UserGroupModelDiscountSettings(props) {
             </li>
             <li>
               <Text strong>discount</Text>:{' '}
-              {t('折扣比例 0~1，例如 0.2 = 2 折')}
+              {t('折扣比例 0~1，等于客户对官方价的最终折扣。0.2 = 2 折 of 官方价；0.5 = 5 折。')}
             </li>
           </ul>
         </Paragraph>
         <Paragraph type='tertiary' style={{ marginBottom: 12 }}>
           {t(
-            '计费链路：ratio = ModelRatio[model] × UserGroupModelDiscount[group][model] × GroupRatio[channel_group]。空 / 未配置 = 折扣 1.0（沿用旧价）。',
+            '计费链路（重要）：配了 (group, model) 项 → 最终 ratio = ModelRatio × discount，GroupRatio 被绕过；未配 → 按旧链路 ModelRatio × GroupRatio 计费。这样 BD 在 UI 输入的数字直接等于客户实际折扣，不需要反推 GroupRatio。',
           )}
         </Paragraph>
 

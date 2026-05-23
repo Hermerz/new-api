@@ -41,6 +41,16 @@ func GenerateTextOtherInfo(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, m
 	other["cache_ratio"] = cacheRatio
 	other["model_price"] = modelPrice
 	other["user_group_ratio"] = userGroupRatio
+	// user_group_discount: the raw discount factor configured in admin UI
+	// (Hermerz/Hermes#51 option A). Only written when an explicit discount
+	// was applied — its absence means "fell back to ModelRatio × GroupRatio".
+	// Read directly from relayInfo.PriceData so all callers (Text / Wss /
+	// Audio / Claude wrappers) get this field for free without signature
+	// changes. modelRatio above already has the discount baked in;
+	// group_ratio is 1.0 for matched requests.
+	if relayInfo != nil && relayInfo.PriceData.UserGroupDiscount > 0 {
+		other["user_group_discount"] = relayInfo.PriceData.UserGroupDiscount
+	}
 	other["frt"] = float64(relayInfo.FirstResponseTime.UnixMilli() - relayInfo.StartTime.UnixMilli())
 	if relayInfo.ReasoningEffort != "" {
 		other["reasoning_effort"] = relayInfo.ReasoningEffort

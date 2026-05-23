@@ -25,6 +25,14 @@ type PriceData struct {
 	Quota                int // 按次计费的最终额度（MJ / Task）
 	QuotaToPreConsume    int // 按量计费的预消耗额度
 	GroupRatioInfo       GroupRatioInfo
+	// UserGroupDiscount: the raw discount value that was applied to ModelRatio
+	// for this (user_group, model) pair (Hermerz/Hermes#51 option A). 0 means
+	// "no discount configured, fell back to ModelRatio × GroupRatio". When
+	// non-zero, ModelRatio above has already been multiplied by this value
+	// AND GroupRatioInfo.GroupRatio has been forced to 1.0. Used for log
+	// observability so BD can see the configured discount alongside the baked
+	// effective ratio.
+	UserGroupDiscount float64
 }
 
 func (p *PriceData) AddOtherRatio(key string, ratio float64) {
