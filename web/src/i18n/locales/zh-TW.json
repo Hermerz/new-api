@@ -255,6 +255,7 @@
     "与本地相同": "與本地相同",
     "专属倍率": "專屬倍率",
     "用户分组折扣": "使用者分組折扣",
+    "discount 必须 > 0（group={{group}}, model={{model}}, 当前值={{value}}）：≤ 0 的值会被后端当作 \"未配置\" sentinel，悄悄回退到 GroupRatio。免费模型请用专属 channel group + GroupRatio=0。": "discount 必須 > 0（group={{group}}, model={{model}}, 目前值={{value}}）：≤ 0 的值會被後端當作「未配置」sentinel，靜默回退到 GroupRatio。免費模型請用專屬 channel group + GroupRatio=0。",
     "专属分组": "專屬分組",
     "两个分组都勾选了「用户可选」，所以用户创建令牌时可以看到这两个选项：": "兩個分組都勾選了「使用者可選」，所以使用者建立令牌時可以看到這兩個選項：",
     "两次输入的密码不一致": "兩次輸入的密碼不一致",

@@ -300,6 +300,7 @@
     "与本地相同": "Giống như cục bộ",
     "专属倍率": "Tỷ lệ nhóm độc quyền",
     "用户分组折扣": "Chiết khấu nhóm người dùng",
+    "discount 必须 > 0（group={{group}}, model={{model}}, 当前值={{value}}）：≤ 0 的值会被后端当作 \"未配置\" sentinel，悄悄回退到 GroupRatio。免费模型请用专属 channel group + GroupRatio=0。": "discount phải > 0 (group={{group}}, model={{model}}, giá trị hiện tại={{value}}): các giá trị ≤ 0 được backend xem như sentinel \"chưa cấu hình\" và lặng lẽ quay về GroupRatio. Với model miễn phí, hãy dùng channel group riêng với GroupRatio=0.",
     "专属分组": "Exclusive group",
     "两个分组都勾选了「用户可选」，所以用户创建令牌时可以看到这两个选项：": "Both groups have \"User Selectable\" checked, so users can see these two options when creating tokens:",
     "两次输入的密码不一致": "Hai mật khẩu đã nhập không khớp",

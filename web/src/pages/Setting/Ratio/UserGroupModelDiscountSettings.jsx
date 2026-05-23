@@ -21,14 +21,21 @@ import React, { useEffect, useRef, useState } from 'react';
 import { Button, Card, Form, Spin, Typography } from '@douyinfe/semi-ui';
 import { useTranslation } from 'react-i18next';
 
-import { API, showError, showSuccess, showWarning, verifyJSON } from '../../../helpers';
+import {
+  API,
+  showError,
+  showSuccess,
+  showWarning,
+  verifyJSON,
+} from '../../../helpers';
 
 const { Text, Paragraph } = Typography;
 
 // Backend setting key — see setting/ratio_setting/user_group_discount.go
 // (Hermerz/new-api#3). Storage shape is map[string]map[string]float64:
 // group → model → discount (0~1, where 0.2 = 2折).
-const OPTION_KEY = 'user_group_model_discount_setting.user_group_model_discount';
+const OPTION_KEY =
+  'user_group_model_discount_setting.user_group_model_discount';
 
 const EXAMPLE_JSON = `{
   "default": {
@@ -63,6 +70,34 @@ export default function UserGroupModelDiscountSettings(props) {
     }
     if (value.trim() && !verifyJSON(value)) {
       return showError(t('JSON 格式错误'));
+    }
+
+    // Reject discount <= 0 (Hermerz/Hermes#71). Backend mirrors this invariant
+    // at settle time: `if appliedUserGroupDiscount > 0` — anything ≤ 0 (including
+    // negative and the sentinel 0) silently falls back to GroupRatio. UI must
+    // match the backend check so the two stay in sync as one mental model. For
+    // free-tier semantics, BD should use a dedicated channel group with
+    // GroupRatio = 0 instead.
+    if (value.trim()) {
+      const parsed = JSON.parse(value);
+      for (const group of Object.keys(parsed || {})) {
+        const models = parsed[group] || {};
+        for (const model of Object.keys(models)) {
+          const discount = models[model];
+          if (typeof discount === 'number' && discount <= 0) {
+            return showError(
+              t(
+                'discount 必须 > 0（group={{group}}, model={{model}}, 当前值={{value}}）：≤ 0 的值会被后端当作 "未配置" sentinel，悄悄回退到 GroupRatio。免费模型请用专属 channel group + GroupRatio=0。',
+                {
+                  group,
+                  model,
+                  value: discount,
+                },
+              ),
+            );
+          }
+        }
+      }
     }
 
     setLoading(true);
@@ -114,17 +149,19 @@ export default function UserGroupModelDiscountSettings(props) {
           <ul style={{ marginTop: 4 }}>
             <li>
               <Text strong>group</Text>:{' '}
-              {t('用户分组名，需与 User 表 group 字段一致（如 default / enterprise）')}
-            </li>
-            <li>
-              <Text strong>model</Text>:{' '}
               {t(
-                '模型名，支持 *-openai-compact 通配符（与 ModelRatio 一致）',
+                '用户分组名，需与 User 表 group 字段一致（如 default / enterprise）',
               )}
             </li>
             <li>
+              <Text strong>model</Text>:{' '}
+              {t('模型名，支持 *-openai-compact 通配符（与 ModelRatio 一致）')}
+            </li>
+            <li>
               <Text strong>discount</Text>:{' '}
-              {t('折扣比例 0~1，等于客户对官方价的最终折扣。0.2 = 2 折 of 官方价；0.5 = 5 折。')}
+              {t(
+                '折扣比例 0~1，等于客户对官方价的最终折扣。0.2 = 2 折 of 官方价；0.5 = 5 折。',
+              )}
             </li>
           </ul>
         </Paragraph>

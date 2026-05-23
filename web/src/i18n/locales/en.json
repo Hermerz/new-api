@@ -307,6 +307,7 @@
     "与本地相同": "Same as local",
     "专属倍率": "Exclusive group ratio",
     "用户分组折扣": "User group discount",
+    "discount 必须 > 0（group={{group}}, model={{model}}, 当前值={{value}}）：≤ 0 的值会被后端当作 \"未配置\" sentinel，悄悄回退到 GroupRatio。免费模型请用专属 channel group + GroupRatio=0。": "discount must be > 0 (group={{group}}, model={{model}}, current value={{value}}): values ≤ 0 are treated by the backend as the 'not configured' sentinel and silently fall back to GroupRatio. For free-tier models, use a dedicated channel group with GroupRatio=0 instead.",
     "专属分组": "Exclusive group",
     "两个分组都勾选了「用户可选」，所以用户创建令牌时可以看到这两个选项：": "Both groups have \"User Selectable\" checked, so users can see these two options when creating tokens:",
     "两次输入的密码不一致": "The two passwords entered do not match",
