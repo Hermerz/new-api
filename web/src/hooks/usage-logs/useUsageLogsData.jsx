@@ -445,6 +445,7 @@ export const useLogsData = () => {
                   other.cache_creation_ratio ||
                   1.0,
                 billingDisplayMode,
+                other?.user_group_discount,
               )
             : renderLogContent(
                 other?.model_ratio,
@@ -460,6 +461,7 @@ export const useLogsData = () => {
                 other.file_search || false,
                 other.file_search_call_count || 0,
                 billingDisplayMode,
+                other?.user_group_discount,
               ),
         });
         if (logs[i]?.content) {
@@ -517,6 +519,7 @@ export const useLogsData = () => {
               other?.cache_tokens || 0,
               other?.cache_ratio || 1.0,
               billingDisplayMode,
+              other?.user_group_discount,
             );
           } else if (other?.claude) {
             content = renderClaudeModelPrice(
@@ -540,6 +543,7 @@ export const useLogsData = () => {
                 other.cache_creation_ratio ||
                 1.0,
               billingDisplayMode,
+              other?.user_group_discount,
             );
           } else {
             content = renderModelPrice(
@@ -567,6 +571,7 @@ export const useLogsData = () => {
               other?.image_generation_call || false,
               other?.image_generation_call_price || 0,
               billingDisplayMode,
+              other?.user_group_discount,
             );
           }
           expandDataLocal.push({

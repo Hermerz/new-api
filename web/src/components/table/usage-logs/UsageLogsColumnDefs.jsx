@@ -375,7 +375,13 @@ function normalizeDetailText(detail) {
     .replace(/\r\n/g, '\n');
 }
 
-function getUsageLogGroupSummary(groupRatio, userGroupRatio, t) {
+function getUsageLogGroupSummary(groupRatio, userGroupRatio, t, userGroupDiscount) {
+  const parsedDiscount = Number(userGroupDiscount);
+  const useUserGroupDiscount =
+    Number.isFinite(parsedDiscount) && parsedDiscount > 0;
+  if (useUserGroupDiscount) {
+    return `${t('用户分组折扣')} ${formatRatio(parsedDiscount)}x`;
+  }
   const parsedUserGroupRatio = Number(userGroupRatio);
   const useUserGroupRatio =
     Number.isFinite(parsedUserGroupRatio) && parsedUserGroupRatio !== -1;
@@ -446,6 +452,7 @@ function getUsageLogDetailSummary(record, text, billingDisplayMode, t) {
       other?.group_ratio,
       other?.user_group_ratio,
       t,
+      other?.user_group_discount,
     );
     return {
       segments: [
@@ -481,6 +488,7 @@ function getUsageLogDetailSummary(record, text, billingDisplayMode, t) {
           'claude',
           billingDisplayMode,
           'segments',
+          other?.user_group_discount,
         )
       : renderModelPriceSimple(
           other.model_ratio,
@@ -501,6 +509,7 @@ function getUsageLogDetailSummary(record, text, billingDisplayMode, t) {
           'openai',
           billingDisplayMode,
           'segments',
+          other?.user_group_discount,
         ),
   };
 }

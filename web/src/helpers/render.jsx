@@ -1181,13 +1181,34 @@ function isValidGroupRatio(ratio) {
   return Number.isFinite(ratio) && ratio !== -1;
 }
 
+function isValidUserGroupDiscount(discount) {
+  return Number.isFinite(discount) && discount > 0;
+}
+
 /**
- * Helper function to get effective ratio and label
- * @param {number} groupRatio - The default group ratio
- * @param {number} user_group_ratio - The user-specific group ratio
- * @returns {Object} - Object containing { ratio, label, useUserGroupRatio }
+ * Helper function to get effective ratio and label.
+ *
+ * Priority: user_group_discount > user_group_ratio > groupRatio.
+ *
+ * user_group_discount (Hermerz/Hermes#51 option A) bypasses GroupRatio at the
+ * billing settle path: when configured, final ratio = ModelRatio × discount,
+ * so the UI displays it as the actual factor applied to cost.
+ *
+ * @param {number} groupRatio - Default channel-group ratio
+ * @param {number} user_group_ratio - Per-(user-group, channel-group) override
+ *        (sentinel -1 = not configured)
+ * @param {number} user_group_discount - Per-(user-group, model) discount
+ *        (sentinel 0 = not configured)
  */
-function getEffectiveRatio(groupRatio, user_group_ratio) {
+function getEffectiveRatio(groupRatio, user_group_ratio, user_group_discount) {
+  if (isValidUserGroupDiscount(user_group_discount)) {
+    return {
+      ratio: user_group_discount,
+      label: i18next.t('用户分组折扣'),
+      useUserGroupRatio: false,
+      useUserGroupDiscount: true,
+    };
+  }
   const useUserGroupRatio = isValidGroupRatio(user_group_ratio);
   const ratioLabel = useUserGroupRatio
     ? i18next.t('专属倍率')
@@ -1198,6 +1219,7 @@ function getEffectiveRatio(groupRatio, user_group_ratio) {
     ratio: effectiveRatio,
     label: ratioLabel,
     useUserGroupRatio: useUserGroupRatio,
+    useUserGroupDiscount: false,
   };
 }
 
@@ -1240,8 +1262,12 @@ function joinBillingSummary(parts) {
   return parts.filter(Boolean).join('，');
 }
 
-function getGroupRatioText(groupRatio, user_group_ratio) {
-  const { ratio, label } = getEffectiveRatio(groupRatio, user_group_ratio);
+function getGroupRatioText(groupRatio, user_group_ratio, user_group_discount) {
+  const { ratio, label } = getEffectiveRatio(
+    groupRatio,
+    user_group_ratio,
+    user_group_discount,
+  );
   return i18next.t('{{ratioType}} {{ratio}}x', {
     ratioType: label,
     ratio,
@@ -1301,6 +1327,7 @@ function renderPriceSimpleCore({
   modelPrice = -1,
   groupRatio,
   user_group_ratio,
+  user_group_discount,
   cacheTokens = 0,
   cacheRatio = 1.0,
   cacheCreationTokens = 0,
@@ -1318,6 +1345,7 @@ function renderPriceSimpleCore({
   const { ratio: effectiveGroupRatio, label: ratioLabel } = getEffectiveRatio(
     groupRatio,
     user_group_ratio,
+    user_group_discount,
   );
   const finalGroupRatio = effectiveGroupRatio;
 
@@ -1338,7 +1366,7 @@ function renderPriceSimpleCore({
     const segments = [
       {
         tone: 'primary',
-        text: getGroupRatioText(groupRatio, user_group_ratio),
+        text: getGroupRatioText(groupRatio, user_group_ratio, user_group_discount),
       },
     ];
 
@@ -1487,7 +1515,7 @@ function renderPriceSimpleCore({
           symbol: symbol,
           price: (modelPrice * rate).toFixed(6),
         }),
-        getGroupRatioText(groupRatio, user_group_ratio),
+        getGroupRatioText(groupRatio, user_group_ratio, user_group_discount),
       ]);
     }
     const displayPrice = (modelPrice * rate).toFixed(6);
@@ -1507,7 +1535,7 @@ function renderPriceSimpleCore({
           price: formatCompactDisplayPrice(modelPrice),
         }),
       );
-      parts.push(getGroupRatioText(groupRatio, user_group_ratio));
+      parts.push(getGroupRatioText(groupRatio, user_group_ratio, user_group_discount));
       return joinBillingSummary(parts);
     }
 
@@ -1561,7 +1589,7 @@ function renderPriceSimpleCore({
       );
     }
 
-    parts.push(getGroupRatioText(groupRatio, user_group_ratio));
+    parts.push(getGroupRatioText(groupRatio, user_group_ratio, user_group_discount));
 
     let result = joinBillingSummary(parts);
     if (isSystemPromptOverride) {
@@ -1657,10 +1685,12 @@ export function renderModelPrice(
   imageGenerationCall = false,
   imageGenerationCallPrice = 0,
   displayMode = 'price',
+  user_group_discount,
 ) {
   const { ratio: effectiveGroupRatio, label: ratioLabel } = getEffectiveRatio(
     groupRatio,
     user_group_ratio,
+    user_group_discount,
   );
   groupRatio = effectiveGroupRatio;
 
@@ -2104,12 +2134,13 @@ export function renderLogContent(
   fileSearch = false,
   fileSearchCallCount = 0,
   displayMode = 'price',
+  user_group_discount,
 ) {
   const {
     ratio,
     label: ratioLabel,
     useUserGroupRatio: useUserGroupRatio,
-  } = getEffectiveRatio(groupRatio, user_group_ratio);
+  } = getEffectiveRatio(groupRatio, user_group_ratio, user_group_discount);
 
   // 获取货币配置
   const { symbol, rate } = getCurrencyConfig();
@@ -2121,7 +2152,7 @@ export function renderLogContent(
           symbol,
           price: (modelPrice * rate).toFixed(6),
         }),
-        getGroupRatioText(groupRatio, user_group_ratio),
+        getGroupRatioText(groupRatio, user_group_ratio, user_group_discount),
       ]);
     }
 
@@ -2169,7 +2200,7 @@ export function renderLogContent(
         fileSearchCallCount,
       },
     );
-    parts.push(getGroupRatioText(groupRatio, user_group_ratio));
+    parts.push(getGroupRatioText(groupRatio, user_group_ratio, user_group_discount));
     return joinBillingSummary(parts);
   }
 
@@ -2239,12 +2270,14 @@ export function renderModelPriceSimple(
   provider = 'openai',
   displayMode = 'price',
   outputMode = 'text',
+  user_group_discount,
 ) {
   return renderPriceSimpleCore({
     modelRatio,
     modelPrice,
     groupRatio,
     user_group_ratio,
+    user_group_discount,
     cacheTokens,
     cacheRatio,
     cacheCreationTokens,
@@ -2276,10 +2309,12 @@ export function renderAudioModelPrice(
   cacheTokens = 0,
   cacheRatio = 1.0,
   displayMode = 'price',
+  user_group_discount,
 ) {
   const { ratio: effectiveGroupRatio, label: ratioLabel } = getEffectiveRatio(
     groupRatio,
     user_group_ratio,
+    user_group_discount,
   );
   groupRatio = effectiveGroupRatio;
 
@@ -2564,10 +2599,12 @@ export function renderClaudeModelPrice(
   cacheCreationTokens1h = 0,
   cacheCreationRatio1h = 1.0,
   displayMode = 'price',
+  user_group_discount,
 ) {
   const { ratio: effectiveGroupRatio, label: ratioLabel } = getEffectiveRatio(
     groupRatio,
     user_group_ratio,
+    user_group_discount,
   );
   groupRatio = effectiveGroupRatio;
 
@@ -2969,10 +3006,12 @@ export function renderClaudeLogContent(
   cacheCreationTokens1h = 0,
   cacheCreationRatio1h = 1.0,
   displayMode = 'price',
+  user_group_discount,
 ) {
   const { ratio: effectiveGroupRatio, label: ratioLabel } = getEffectiveRatio(
     groupRatio,
     user_group_ratio,
+    user_group_discount,
   );
   groupRatio = effectiveGroupRatio;
 
@@ -2986,7 +3025,7 @@ export function renderClaudeLogContent(
           symbol,
           price: (modelPrice * rate).toFixed(6),
         }),
-        getGroupRatioText(groupRatio, user_group_ratio),
+        getGroupRatioText(groupRatio, user_group_ratio, user_group_discount),
       ]);
     }
 
@@ -3033,7 +3072,7 @@ export function renderClaudeLogContent(
         price: (modelRatio * 2.0 * cacheCreationRatio * rate).toFixed(6),
       },
     );
-    parts.push(getGroupRatioText(groupRatio, user_group_ratio));
+    parts.push(getGroupRatioText(groupRatio, user_group_ratio, user_group_discount));
     return joinBillingSummary(parts);
   }
 

@@ -302,6 +302,7 @@
     "不限制": "Illimité",
     "与本地相同": "Identique au local",
     "专属倍率": "Ratio de groupe exclusif",
+    "用户分组折扣": "Remise de groupe utilisateur",
     "专属分组": "Exclusive group",
     "两个分组都勾选了「用户可选」，所以用户创建令牌时可以看到这两个选项：": "Both groups have \"User Selectable\" checked, so users can see these two options when creating tokens:",
     "两次输入的密码不一致": "Les deux mots de passe saisis ne correspondent pas",
