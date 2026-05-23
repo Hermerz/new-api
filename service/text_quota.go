@@ -36,6 +36,7 @@ type textQuotaSummary struct {
 	ImageRatio               float64
 	ModelRatio               float64
 	GroupRatio               float64
+	UserGroupDiscount        float64 // raw discount factor; 0 = not configured (Hermerz/Hermes#51 / #68)
 	ModelPrice               float64
 	CacheCreationRatio       float64
 	CacheCreationRatio5m     float64
@@ -87,6 +88,7 @@ func calculateTextQuotaSummary(ctx *gin.Context, relayInfo *relaycommon.RelayInf
 		ImageRatio:           relayInfo.PriceData.ImageRatio,
 		ModelRatio:           relayInfo.PriceData.ModelRatio,
 		GroupRatio:           relayInfo.PriceData.GroupRatioInfo.GroupRatio,
+		UserGroupDiscount:    relayInfo.PriceData.UserGroupDiscount,
 		ModelPrice:           relayInfo.PriceData.ModelPrice,
 		CacheCreationRatio:   relayInfo.PriceData.CacheCreationRatio,
 		CacheCreationRatio5m: relayInfo.PriceData.CacheCreation5mRatio,
@@ -139,7 +141,15 @@ func calculateTextQuotaSummary(ctx *gin.Context, relayInfo *relaycommon.RelayInf
 	dCacheRatio := decimal.NewFromFloat(summary.CacheRatio)
 	dImageRatio := decimal.NewFromFloat(summary.ImageRatio)
 	dModelRatio := decimal.NewFromFloat(summary.ModelRatio)
-	dGroupRatio := decimal.NewFromFloat(summary.GroupRatio)
+	// Effective group ratio per Hermerz/Hermes#51 option A + #68 no-bake:
+	// when UserGroupDiscount > 0 it overrides GroupRatio for billing math.
+	// All downstream `dGroupRatio` multiplications inherit the effective value;
+	// summary.GroupRatio (raw) is preserved in the struct for log observability.
+	effectiveGroupRatio := summary.GroupRatio
+	if summary.UserGroupDiscount > 0 {
+		effectiveGroupRatio = summary.UserGroupDiscount
+	}
+	dGroupRatio := decimal.NewFromFloat(effectiveGroupRatio)
 	dModelPrice := decimal.NewFromFloat(summary.ModelPrice)
 	dCacheCreationRatio := decimal.NewFromFloat(summary.CacheCreationRatio)
 	dCacheCreationRatio5m := decimal.NewFromFloat(summary.CacheCreationRatio5m)

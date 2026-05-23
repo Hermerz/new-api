@@ -121,31 +121,28 @@ func PreWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usag
 		actualGroupRatio = userGroupRatio
 	}
 
-	// Apply user-group × model discount (Hermerz/Hermes#51 / Hermerz/new-api#3).
-	// Option A: discount value = "final fraction of model official price"; when
-	// set, it BYPASSES GroupRatio entirely. Lookup keyed by relayInfo.UserGroup
-	// (= user.Group, NOT UsingGroup) per #51 spec + #66 colleague review:
-	// 客户分层 = user 维度，不让路由 autoGroup 影响计费语义。Applied AFTER all
-	// GroupRatio computation so the override is unconditional. See
-	// relay/helper/price.go for full rationale.
-	if discount, ok := ratio_setting.GetUserGroupModelDiscount(relayInfo.UserGroup, modelName); ok {
-		modelRatio = modelRatio * discount
-		actualGroupRatio = 1.0
-		relayInfo.PriceData.UserGroupDiscount = discount
+	// Apply user-group × model discount (Hermerz/Hermes#51 / #66 / #68).
+	// No-bake semantic: capture raw discount factor into priceData; settle path
+	// computes effective via priceData.EffectiveGroupRatio() so log + 对账 can
+	// show "市场基线 (ModelRatio) × 客户分层 (GroupRatio)" + "实际折扣
+	// (UserGroupDiscount)" as separate fields.
+	// Lookup keyed by relayInfo.UserGroup (= user.Group) per #51 spec.
+	appliedDiscount := ratio_setting.LookupUserGroupDiscount(relayInfo.UserGroup, modelName)
+
+	// Effective group ratio for billing: discount overrides GroupRatio when set.
+	effectiveGroupRatio := actualGroupRatio
+	if appliedDiscount > 0 {
+		effectiveGroupRatio = appliedDiscount
 	}
 
-	// Sync the recomputed ratios back to relayInfo.PriceData so
-	// PostWssConsumeQuota (which reads PriceData.ModelRatio +
-	// PriceData.GroupRatioInfo.GroupRatio for settle + log) uses the SAME
-	// values as pre-consume. Without this sync, if autoGroup re-routed
-	// between ModelPriceHelper and now, settle would use stale
-	// pre-autoGroup ratios while pre-consume reserved at post-autoGroup
-	// rate. Pre-existing WSS bug surfaced by Codex cross-model review of
-	// the discount layer PR; fix-in-place here is minimal and addresses
-	// both the original asymmetry and the new partial-update (only
-	// UserGroupDiscount was being written) introduced earlier in this PR.
+	// Sync raw values + discount to PriceData so PostWssConsumeQuota (which
+	// reads PriceData for settle) sees consistent values even if autoGroup
+	// re-routed since ModelPriceHelper. Pre-existing WSS bug surfaced by
+	// Codex cross-model review of the option-A PR — same fix-in-place here,
+	// adapted to no-bake semantics.
 	relayInfo.PriceData.ModelRatio = modelRatio
 	relayInfo.PriceData.GroupRatioInfo.GroupRatio = actualGroupRatio
+	relayInfo.PriceData.UserGroupDiscount = appliedDiscount
 
 	quotaInfo := QuotaInfo{
 		InputDetails: TokenDetails{
@@ -159,7 +156,10 @@ func PreWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usag
 		ModelName:  modelName,
 		UsePrice:   relayInfo.UsePrice,
 		ModelRatio: modelRatio,
-		GroupRatio: actualGroupRatio,
+		// GroupRatio passed as effective (discount overrides raw GroupRatio when
+		// set). PriceData still holds raw values for log/对账 — log writer reads
+		// model_ratio + group_ratio + user_group_discount as 3 independent fields.
+		GroupRatio: effectiveGroupRatio,
 	}
 
 	quota := calculateAudioQuota(quotaInfo)
@@ -195,8 +195,13 @@ func PostWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, mod
 	audioRatio := decimal.NewFromFloat(ratio_setting.GetAudioRatio(relayInfo.OriginModelName))
 	audioCompletionRatio := decimal.NewFromFloat(ratio_setting.GetAudioCompletionRatio(modelName))
 
-	modelRatio := relayInfo.PriceData.ModelRatio
-	groupRatio := relayInfo.PriceData.GroupRatioInfo.GroupRatio
+	modelRatio := relayInfo.PriceData.ModelRatio                   // raw (for log)
+	rawGroupRatio := relayInfo.PriceData.GroupRatioInfo.GroupRatio // raw (for log)
+	// effectiveGroupRatio: UserGroupDiscount if set, else raw GroupRatio.
+	// Used for billing math via calculateAudioQuota. Log writer separately
+	// receives rawGroupRatio so the 3 fields (model_ratio raw / group_ratio
+	// raw / user_group_discount) stay independent per Hermerz/Hermes#68.
+	effectiveGroupRatio := relayInfo.PriceData.EffectiveGroupRatio()
 	modelPrice := relayInfo.PriceData.ModelPrice
 	usePrice := relayInfo.PriceData.UsePrice
 
@@ -212,7 +217,7 @@ func PostWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, mod
 		ModelName:  modelName,
 		UsePrice:   usePrice,
 		ModelRatio: modelRatio,
-		GroupRatio: groupRatio,
+		GroupRatio: effectiveGroupRatio,
 	}
 
 	quota := calculateAudioQuota(quotaInfo)
@@ -220,10 +225,12 @@ func PostWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, mod
 	totalTokens := usage.TotalTokens
 	var logContent string
 	if !usePrice {
+		// logContent 显示 effective_group_ratio（= 客户实际付的 group 倍率）
+		// 因为 BD 读 log 时关心客户真正扣了多少；raw group_ratio 在 other.group_ratio 里。
 		logContent = fmt.Sprintf("模型倍率 %.2f，补全倍率 %.2f，音频倍率 %.2f，音频补全倍率 %.2f，分组倍率 %.2f",
-			modelRatio, completionRatio.InexactFloat64(), audioRatio.InexactFloat64(), audioCompletionRatio.InexactFloat64(), groupRatio)
+			modelRatio, completionRatio.InexactFloat64(), audioRatio.InexactFloat64(), audioCompletionRatio.InexactFloat64(), effectiveGroupRatio)
 	} else {
-		logContent = fmt.Sprintf("模型价格 %.2f，分组倍率 %.2f", modelPrice, groupRatio)
+		logContent = fmt.Sprintf("模型价格 %.2f，分组倍率 %.2f", modelPrice, effectiveGroupRatio)
 	}
 
 	// record all the consume log even if quota is 0
@@ -243,7 +250,7 @@ func PostWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, mod
 	if extraContent != "" {
 		logContent += ", " + extraContent
 	}
-	other := GenerateWssOtherInfo(ctx, relayInfo, usage, modelRatio, groupRatio,
+	other := GenerateWssOtherInfo(ctx, relayInfo, usage, modelRatio, rawGroupRatio,
 		completionRatio.InexactFloat64(), audioRatio.InexactFloat64(), audioCompletionRatio.InexactFloat64(), modelPrice, relayInfo.PriceData.GroupRatioInfo.GroupSpecialRatio)
 	model.RecordConsumeLog(ctx, relayInfo.UserId, model.RecordConsumeLogParams{
 		ChannelId:        relayInfo.ChannelId,
@@ -296,8 +303,9 @@ func PostAudioConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, u
 	audioRatio := decimal.NewFromFloat(ratio_setting.GetAudioRatio(relayInfo.OriginModelName))
 	audioCompletionRatio := decimal.NewFromFloat(ratio_setting.GetAudioCompletionRatio(relayInfo.OriginModelName))
 
-	modelRatio := relayInfo.PriceData.ModelRatio
-	groupRatio := relayInfo.PriceData.GroupRatioInfo.GroupRatio
+	modelRatio := relayInfo.PriceData.ModelRatio                   // raw (for log)
+	rawGroupRatio := relayInfo.PriceData.GroupRatioInfo.GroupRatio // raw (for log)
+	effectiveGroupRatio := relayInfo.PriceData.EffectiveGroupRatio()
 	modelPrice := relayInfo.PriceData.ModelPrice
 	usePrice := relayInfo.PriceData.UsePrice
 
@@ -313,7 +321,7 @@ func PostAudioConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, u
 		ModelName:  relayInfo.OriginModelName,
 		UsePrice:   usePrice,
 		ModelRatio: modelRatio,
-		GroupRatio: groupRatio,
+		GroupRatio: effectiveGroupRatio,
 	}
 
 	quota := calculateAudioQuota(quotaInfo)
@@ -322,9 +330,9 @@ func PostAudioConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, u
 	var logContent string
 	if !usePrice {
 		logContent = fmt.Sprintf("模型倍率 %.2f，补全倍率 %.2f，音频倍率 %.2f，音频补全倍率 %.2f，分组倍率 %.2f",
-			modelRatio, completionRatio.InexactFloat64(), audioRatio.InexactFloat64(), audioCompletionRatio.InexactFloat64(), groupRatio)
+			modelRatio, completionRatio.InexactFloat64(), audioRatio.InexactFloat64(), audioCompletionRatio.InexactFloat64(), effectiveGroupRatio)
 	} else {
-		logContent = fmt.Sprintf("模型价格 %.2f，分组倍率 %.2f", modelPrice, groupRatio)
+		logContent = fmt.Sprintf("模型价格 %.2f，分组倍率 %.2f", modelPrice, effectiveGroupRatio)
 	}
 
 	// record all the consume log even if quota is 0
@@ -348,7 +356,7 @@ func PostAudioConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, u
 	if extraContent != "" {
 		logContent += ", " + extraContent
 	}
-	other := GenerateAudioOtherInfo(ctx, relayInfo, usage, modelRatio, groupRatio,
+	other := GenerateAudioOtherInfo(ctx, relayInfo, usage, modelRatio, rawGroupRatio,
 		completionRatio.InexactFloat64(), audioRatio.InexactFloat64(), audioCompletionRatio.InexactFloat64(), modelPrice, relayInfo.PriceData.GroupRatioInfo.GroupSpecialRatio)
 	model.RecordConsumeLog(ctx, relayInfo.UserId, model.RecordConsumeLogParams{
 		ChannelId:        relayInfo.ChannelId,

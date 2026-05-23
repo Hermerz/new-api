@@ -41,15 +41,20 @@ func GenerateTextOtherInfo(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, m
 	other["cache_ratio"] = cacheRatio
 	other["model_price"] = modelPrice
 	other["user_group_ratio"] = userGroupRatio
-	// user_group_discount: the raw discount factor configured in admin UI
+	// user_group_discount: raw discount factor configured in admin UI
 	// (Hermerz/Hermes#51 option A). Only written when an explicit discount
 	// was applied — its absence means "fell back to ModelRatio × GroupRatio".
-	// Read directly from relayInfo.PriceData so all callers (Text / Wss /
-	// Audio / Claude wrappers) get this field for free without signature
-	// changes. modelRatio above already has the discount baked in;
-	// group_ratio is 1.0 for matched requests.
+	// Per #68 no-bake refactor: model_ratio above is the raw market baseline
+	// (NOT pre-multiplied with discount); group_ratio is the raw customer
+	// tier (NOT forced to 1.0). effective_model_ratio is the actual final
+	// per-token billing ratio (= model_ratio × user_group_discount when set,
+	// else model_ratio × group_ratio). All 4 fields are independent — 对账
+	// can show "市场基线 × 客户折扣 = 实际扣费" decomposed.
+	// Read from relayInfo.PriceData so all callers (Text/Wss/Audio/Claude
+	// wrappers) get these fields free without signature changes.
 	if relayInfo != nil && relayInfo.PriceData.UserGroupDiscount > 0 {
 		other["user_group_discount"] = relayInfo.PriceData.UserGroupDiscount
+		other["effective_model_ratio"] = relayInfo.PriceData.ModelRatio * relayInfo.PriceData.UserGroupDiscount
 	}
 	other["frt"] = float64(relayInfo.FirstResponseTime.UnixMilli() - relayInfo.StartTime.UnixMilli())
 	if relayInfo.ReasoningEffort != "" {

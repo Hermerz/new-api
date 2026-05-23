@@ -9,8 +9,11 @@ type GroupRatioInfo struct {
 }
 
 type PriceData struct {
-	FreeModel            bool
-	ModelPrice           float64
+	FreeModel  bool
+	ModelPrice float64
+	// ModelRatio: 模型市场基线（对齐官方价 USD/M ÷ $2）。NOT pre-multiplied
+	// with UserGroupDiscount — settle path applies effective via
+	// EffectiveGroupRatio() method.
 	ModelRatio           float64
 	CompletionRatio      float64
 	CacheRatio           float64
@@ -24,15 +27,30 @@ type PriceData struct {
 	UsePrice             bool
 	Quota                int // 按次计费的最终额度（MJ / Task）
 	QuotaToPreConsume    int // 按量计费的预消耗额度
-	GroupRatioInfo       GroupRatioInfo
-	// UserGroupDiscount: the raw discount value that was applied to ModelRatio
-	// for this (user_group, model) pair (Hermerz/Hermes#51 option A). 0 means
-	// "no discount configured, fell back to ModelRatio × GroupRatio". When
-	// non-zero, ModelRatio above has already been multiplied by this value
-	// AND GroupRatioInfo.GroupRatio has been forced to 1.0. Used for log
-	// observability so BD can see the configured discount alongside the baked
-	// effective ratio.
+	// GroupRatioInfo.GroupRatio: 客户分层基线 GroupRatio (raw)。NOT forced
+	// to 1.0 when UserGroupDiscount > 0 — settle path picks effective via
+	// EffectiveGroupRatio() method.
+	GroupRatioInfo GroupRatioInfo
+	// UserGroupDiscount: the raw discount factor configured for this
+	// (user_group, model) pair (Hermerz/Hermes#51 option A). 0 means "not
+	// configured, fallback to ModelRatio × GroupRatio". When > 0, billing
+	// uses ModelRatio × UserGroupDiscount (bypassing GroupRatio per option A).
+	// Stored as raw factor (not baked into ModelRatio) so log + 对账 can
+	// show market baseline + customer discount as separate fields per
+	// Hermerz/Hermes#68.
 	UserGroupDiscount float64
+}
+
+// EffectiveGroupRatio returns the group-level multiplier actually used for
+// billing: UserGroupDiscount if explicitly configured for this (group, model)
+// pair, otherwise GroupRatioInfo.GroupRatio. Per #51 Phase 1 option A,
+// configuring a discount overrides the per-tier GroupRatio so BD's "0.2 in
+// admin UI = customer pays 2折 of official" holds regardless of customer tier.
+func (p PriceData) EffectiveGroupRatio() float64 {
+	if p.UserGroupDiscount > 0 {
+		return p.UserGroupDiscount
+	}
+	return p.GroupRatioInfo.GroupRatio
 }
 
 func (p *PriceData) AddOtherRatio(key string, ratio float64) {

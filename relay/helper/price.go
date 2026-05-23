@@ -107,33 +107,29 @@ func ModelPriceHelper(c *gin.Context, info *relaycommon.RelayInfo, promptTokens 
 		// User-group × model discount layer (Hermerz/Hermes#51 / Hermerz/new-api#3).
 		//
 		// Semantic (per #51 Phase 1, option A): the discount value entered by BD
-		// = "final fraction of model official price". When set, it BYPASSES the
-		// per-user-group GroupRatio entirely — final billing ratio = ModelRatio
-		// × discount, regardless of GroupRatio. This matches BD's mental model:
-		// "0.2 in admin UI = customer pays 2折 of OpenAI/Anthropic official price".
+		// = "customer's final fraction of model official price". When configured,
+		// it overrides per-tier GroupRatio in billing so BD's "0.2 in admin UI
+		// = 2折 of official" holds regardless of customer's home group.
 		//
-		// Lookup key: info.UserGroup (= user.Group, the user's home tier).
-		// NOT info.UsingGroup. Rationale (per #51 spec + #66 colleague review):
-		//   - #51 命题 = "客户分层 × 模型"，客户分层 = user 维度
-		//   - #51 显式排除"单 key 级别折扣覆盖" → multi-key 多 group 场景属于
-		//     该 punt 的需求，不在本期 scope
-		//   - autoGroup 是路由概念，不应该影响计费语义；用 UserGroup 完全
-		//     规避 autoGroup 边缘 case
+		// Per Hermerz/Hermes#68 (no-bake refactor), the discount is captured
+		// raw into priceData.UserGroupDiscount (NOT pre-multiplied into
+		// ModelRatio) and GroupRatioInfo.GroupRatio is left raw (NOT forced
+		// to 1.0). Settle path uses priceData.EffectiveGroupRatio() to pick
+		// between UserGroupDiscount and GroupRatio. This preserves "market
+		// baseline" + "customer discount" as separate log fields for 对账.
 		//
-		// Unconfigured (group, model) pairs return discount=1.0 → no-op, billing
-		// falls back to ModelRatio × GroupRatio (pre-feature behavior).
-		//
-		// Trade-off: logs / billing records for matched requests will show
-		// modelRatio = ModelRatio × discount and GroupRatio = 1.0. Settle path
-		// in service/text_quota.go reads PriceData.GroupRatioInfo.GroupRatio so
-		// its arithmetic stays consistent with pre-consume.
-		if discount, ok := ratio_setting.GetUserGroupModelDiscount(info.UserGroup, info.OriginModelName); ok {
-			modelRatio = modelRatio * discount
-			groupRatioInfo.GroupRatio = 1.0
-			appliedUserGroupDiscount = discount
-		}
+		// Lookup key: info.UserGroup (= user.Group). Per #51 spec + #66
+		// colleague review: 客户分层 = user 维度，autoGroup 不影响计费。
+		// Unconfigured (group, model) pairs return 0 → fallback to
+		// ModelRatio × GroupRatio (pre-feature behavior).
+		appliedUserGroupDiscount = ratio_setting.LookupUserGroupDiscount(info.UserGroup, info.OriginModelName)
 
-		ratio := modelRatio * groupRatioInfo.GroupRatio
+		// Effective group ratio: discount overrides GroupRatio when set.
+		effectiveGroupRatio := groupRatioInfo.GroupRatio
+		if appliedUserGroupDiscount > 0 {
+			effectiveGroupRatio = appliedUserGroupDiscount
+		}
+		ratio := modelRatio * effectiveGroupRatio
 		preConsumedQuota = int(float64(preConsumedTokens) * ratio)
 	} else {
 		if meta.ImagePriceRatio != 0 {

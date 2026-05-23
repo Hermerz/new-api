@@ -114,3 +114,26 @@ func UpdateUserGroupModelDiscountByJSONString(jsonStr string) error {
 func GetUserGroupModelDiscountCopy() map[string]map[string]float64 {
 	return userGroupModelDiscountMap.ReadAll()
 }
+
+// LookupUserGroupDiscount returns the configured discount factor for
+// (userGroup, modelName) or 0 if not configured (Hermerz/Hermes#67 helper
+// extraction). Sentinel 0 lets callers detect "not configured" cleanly
+// without the (factor, ok) tuple — they store the return value as the
+// PriceData.UserGroupDiscount field which uses 0 = "fallback to GroupRatio"
+// per Hermerz/Hermes#68's no-bake semantics.
+//
+// Use this from billing entry points (ModelPriceHelper, PreWssConsumeQuota,
+// any future per-call billing path) so the lookup convention stays in one
+// place. Previously the if-ok check + assign was inlined in 2 sites, which
+// the WSS commit a4760282 missed once and Codex cross-model review caught.
+//
+// Constraint: BD must not configure discount = 0 — it would collide with
+// the "not configured" sentinel and silently fall back to GroupRatio. For
+// "free tier" semantics, use GroupRatio = 0 on a dedicated channel group
+// instead. Admin UI should reject 0 values (follow-up issue).
+func LookupUserGroupDiscount(userGroup, modelName string) float64 {
+	if discount, ok := GetUserGroupModelDiscount(userGroup, modelName); ok {
+		return discount
+	}
+	return 0
+}
