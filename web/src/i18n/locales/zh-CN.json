@@ -210,6 +210,7 @@
     "与本地相同": "与本地相同",
     "专属倍率": "专属倍率",
     "用户分组折扣": "用户分组折扣",
+    "discount 必须 > 0（group={{group}}, model={{model}}, 当前值={{value}}）：≤ 0 的值会被后端当作 \"未配置\" sentinel，悄悄回退到 GroupRatio。免费模型请用专属 channel group + GroupRatio=0。": "discount 必须 > 0（group={{group}}, model={{model}}, 当前值={{value}}）：≤ 0 的值会被后端当作 \"未配置\" sentinel，悄悄回退到 GroupRatio。免费模型请用专属 channel group + GroupRatio=0。",
     "两次输入的密码不一致": "两次输入的密码不一致",
     "两次输入的密码不一致！": "两次输入的密码不一致！",
     "两步验证": "两步验证",
