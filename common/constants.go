@@ -110,6 +110,12 @@ var AutomaticEnableChannelEnabled = false
 var QuotaRemindThreshold = 1000
 var PreConsumedQuota = 500
 
+// RetryTimes is deprecated since Hermerz/Hermes#78: relay retry now exhausts
+// all matching channels for (group, model) per request instead of capping at a
+// fixed N. The value is still read from the options table to avoid breaking
+// existing deployments but is ignored by the new candidates-exhaustive loop in
+// controller/relay.go; a warning is logged the first time a non-zero value is
+// observed during a relay request. Will be removed in a future release.
 var RetryTimes = 0
 
 //var RootUserEmail = ""
