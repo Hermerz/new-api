@@ -186,13 +186,117 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 	relayInfo.RetryIndex = 0
 	relayInfo.LastError = nil
 
-	for ; retryParam.GetRetry() <= common.RetryTimes; retryParam.IncreaseRetry() {
-		relayInfo.RetryIndex = retryParam.GetRetry()
-		channel, channelErr := getChannel(c, relayInfo, retryParam)
-		if channelErr != nil {
-			logger.LogError(c, channelErr.Error())
-			newAPIError = channelErr
+	// Hermerz/Hermes#78: enumerate all candidate channels upfront and iterate
+	// them, each tried at most once, until success / hard-skip error / total
+	// timeout. Replaces the RetryTimes-bounded loop that defaulted to never
+	// retrying AND skipped same-priority-tier siblings on advance.
+	//
+	// Special cases preserved from the legacy getChannel() path:
+	// - specific_channel_id (sk-<channelId>-<token> auth): admin pinned a
+	//   single channel; bypass candidates and try only that channel once.
+	// - Distribute middleware preselected a channel (channel_id in context):
+	//   that channel is first in candidates; we move it to front explicitly
+	//   in case the candidates ordering put it elsewhere.
+	//
+	// WSS path: candidates loop still applies but is typically single-attempt
+	// in practice (WSS handshake errors trigger shouldRetry==false). See
+	// follow-up Hermerz/Hermes#79 for explicit single-attempt enforcement.
+
+	var candidates []service.RelayCandidate
+	selectedGroup := relayInfo.TokenGroup
+
+	if specificChannelIDRaw, ok := c.Get("specific_channel_id"); ok {
+		// Admin pinned specific channel — single attempt, no candidates pool.
+		// The channel was already set in context by middleware/auth.go; just
+		// use it once and skip candidates enumeration entirely.
+		channelID := c.GetInt("channel_id")
+		if channelID == 0 {
+			newAPIError = types.NewError(fmt.Errorf("specific_channel_id %v set but channel_id missing from context", specificChannelIDRaw), types.ErrorCodeGetChannelFailed, types.ErrOptionWithSkipRetry())
+			return
+		}
+		ch, chErr := model.CacheGetChannel(channelID)
+		if chErr != nil {
+			newAPIError = types.NewError(fmt.Errorf("specific channel #%d not found: %s", channelID, chErr.Error()), types.ErrorCodeGetChannelFailed, types.ErrOptionWithSkipRetry())
+			return
+		}
+		candidates = []service.RelayCandidate{{Channel: ch, Group: selectedGroup}}
+	} else {
+		var candErr error
+		candidates, selectedGroup, candErr = service.GetAllCandidateChannelsForRelay(c, retryParam)
+		if candErr != nil {
+			logger.LogError(c, candErr.Error())
+			newAPIError = types.NewError(fmt.Errorf("获取分组 %s 下模型 %s 的可用渠道失败: %s", selectedGroup, relayInfo.OriginModelName, candErr.Error()), types.ErrorCodeGetChannelFailed, types.ErrOptionWithSkipRetry())
+			return
+		}
+		if len(candidates) == 0 {
+			newAPIError = types.NewError(fmt.Errorf("分组 %s 下模型 %s 的可用渠道不存在", selectedGroup, relayInfo.OriginModelName), types.ErrorCodeGetChannelFailed, types.ErrOptionWithSkipRetry())
+			return
+		}
+
+		// Honor Distribute middleware's preselect: move the channel already
+		// set in context (if any) to candidates[0] so the first attempt uses
+		// the same channel the legacy `getChannel()` ChannelMeta==nil branch
+		// would have returned. Preserves Distribute's group/affinity logic.
+		// Silent fallback (no reorder) if the preselected channel is not in
+		// the candidates list — warn-log this since normally Distribute only
+		// preselects valid (group, model) channels; missing means upstream
+		// changed the channel state between Distribute and Relay (e.g.,
+		// auto-disabled mid-request) and the original pick is no longer
+		// satisfiable.
+		if preselectedID := c.GetInt("channel_id"); preselectedID != 0 {
+			found := false
+			for i := 0; i < len(candidates); i++ {
+				if candidates[i].Channel.Id == preselectedID {
+					found = true
+					if i != 0 {
+						candidates[0], candidates[i] = candidates[i], candidates[0]
+					}
+					break
+				}
+			}
+			if !found {
+				logger.LogWarn(c, fmt.Sprintf("distribute preselect channel #%d not in candidates for (group=%s, model=%s); falling back to natural priority order", preselectedID, selectedGroup, relayInfo.OriginModelName))
+			}
+		}
+	}
+
+	if common.RetryTimes != 0 {
+		log.Printf("[deprecated] RetryTimes=%d is ignored since Hermerz/Hermes#78; retry now exhausts all candidates (%d available for this (group=%s, model=%s) request)",
+			common.RetryTimes, len(candidates), selectedGroup, relayInfo.OriginModelName)
+	}
+
+	totalTimeout := operation_setting.GetChannelExhaustiveRetryTimeout()
+	var deadline time.Time
+	if totalTimeout > 0 {
+		deadline = time.Now().Add(totalTimeout)
+	}
+
+	for idx, cand := range candidates {
+		channel := cand.Channel
+		if totalTimeout > 0 && time.Now().After(deadline) {
+			logger.LogWarn(c, fmt.Sprintf("channel exhaustive retry: deadline %v exceeded after %d/%d candidates", totalTimeout, idx, len(candidates)))
+			if newAPIError == nil {
+				newAPIError = types.NewError(fmt.Errorf("channel exhaustive retry timeout after %v (tried %d/%d candidates)", totalTimeout, idx, len(candidates)), types.ErrorCodeBadResponseStatusCode, types.ErrOptionWithSkipRetry())
+			}
 			break
+		}
+
+		relayInfo.RetryIndex = idx
+
+		// H1 fix: refresh per-candidate auto-group context + group ratio so
+		// billing/logging attributes to the actual group this channel was
+		// selected from (not the original TokenGroup). No-op for non-auto.
+		if cand.Group != "" && cand.Group != relayInfo.TokenGroup {
+			common.SetContextKey(c, constant.ContextKeyAutoGroup, cand.Group)
+			relayInfo.PriceData.GroupRatioInfo = helper.HandleGroupRatio(c, relayInfo)
+		}
+
+		if setupErr := middleware.SetupContextForSelectedChannel(c, channel, relayInfo.OriginModelName); setupErr != nil {
+			newAPIError = setupErr
+			if !shouldRetry(c, setupErr, len(candidates)-idx-1) {
+				break
+			}
+			continue
 		}
 
 		addUsedChannel(c, channel.Id)
@@ -229,7 +333,12 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 
 		processChannelError(c, *types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey, common.GetContextKeyString(c, constant.ContextKeyChannelKey), channel.GetAutoBan()), newAPIError)
 
-		if !shouldRetry(c, newAPIError, common.RetryTimes-retryParam.GetRetry()) {
+		// Pass `remaining` so shouldRetry's retryTimes<=0 short-circuit only fires
+		// when we genuinely have no more candidates to try (i.e., we're on the
+		// last one). Hard-skip rules (504/auth/specific_channel_id) still apply
+		// and abort the loop early as designed.
+		remaining := len(candidates) - idx - 1
+		if !shouldRetry(c, newAPIError, remaining) {
 			break
 		}
 	}

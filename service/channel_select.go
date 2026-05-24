@@ -80,6 +80,75 @@ func (p *RetryParam) ResetRetryNextTry() {
 //
 //	Retry=3: GroupB, priority1 (startRetryIndex=2, priorityRetry=1)
 //	         分组B, 优先级1
+// RelayCandidate pairs a channel with the group it was selected from, so the
+// relay loop can refresh per-attempt context (ContextKeyAutoGroup +
+// PriceData.GroupRatioInfo) when iterating across auto-groups. Without the
+// group field, billing/logging silently mis-attributes to the original
+// TokenGroup. See Hermerz/Hermes#78 Codex review High 1.
+type RelayCandidate struct {
+	Channel *model.Channel
+	Group   string
+}
+
+// GetAllCandidateChannelsForRelay returns the complete ordered list of channels
+// to attempt for a single relay request, per Hermerz/Hermes#78.
+//
+// Ordering:
+//   - For non-auto groups: model.GetAllSatisfiedChannels(group, model) — priority
+//     DESC, within-tier shuffled. All candidates share TokenGroup.
+//   - For "auto" groups: iterate the user's auto-groups in configured order; for
+//     each group append candidates tagged with that group. When the token's
+//     ContextKeyTokenCrossGroupRetry flag is false, only the first non-empty
+//     group's candidates are returned (matches the legacy
+//     CacheGetRandomSatisfiedChannel cross-group-retry-off behaviour).
+//
+// The returned slice may be empty; callers should treat empty as "no available
+// channel for (group, model)". The second return value is the group that the
+// first candidate belongs to (or the requested TokenGroup if no candidates),
+// for use in error messages.
+func GetAllCandidateChannelsForRelay(c *gin.Context, param *RetryParam) ([]RelayCandidate, string, error) {
+	if param.TokenGroup != "auto" {
+		chs, err := model.GetAllSatisfiedChannels(param.TokenGroup, param.ModelName)
+		if err != nil || len(chs) == 0 {
+			return nil, param.TokenGroup, err
+		}
+		out := make([]RelayCandidate, 0, len(chs))
+		for _, ch := range chs {
+			out = append(out, RelayCandidate{Channel: ch, Group: param.TokenGroup})
+		}
+		return out, param.TokenGroup, nil
+	}
+
+	if len(setting.GetAutoGroups()) == 0 {
+		return nil, "auto", errors.New("auto groups is not enabled")
+	}
+	userGroup := common.GetContextKeyString(param.Ctx, constant.ContextKeyUserGroup)
+	autoGroups := GetUserAutoGroup(userGroup)
+	crossGroupRetry := common.GetContextKeyBool(param.Ctx, constant.ContextKeyTokenCrossGroupRetry)
+
+	var combined []RelayCandidate
+	selected := param.TokenGroup
+	for _, g := range autoGroups {
+		chs, err := model.GetAllSatisfiedChannels(g, param.ModelName)
+		if err != nil {
+			return nil, g, err
+		}
+		if len(chs) == 0 {
+			continue
+		}
+		if selected == param.TokenGroup {
+			selected = g
+		}
+		for _, ch := range chs {
+			combined = append(combined, RelayCandidate{Channel: ch, Group: g})
+		}
+		if !crossGroupRetry {
+			break
+		}
+	}
+	return combined, selected, nil
+}
+
 func CacheGetRandomSatisfiedChannel(param *RetryParam) (*model.Channel, string, error) {
 	var channel *model.Channel
 	var err error

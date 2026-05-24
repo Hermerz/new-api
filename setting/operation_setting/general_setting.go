@@ -1,6 +1,23 @@
 package operation_setting
 
-import "github.com/QuantumNous/new-api/setting/config"
+import (
+	"time"
+
+	"github.com/QuantumNous/new-api/setting/config"
+)
+
+// ChannelExhaustiveRetryTotalTimeoutSeconds caps the total wall-clock time
+// spent iterating all candidate channels for a single relay request
+// (Hermerz/Hermes#78). Default 30s. <=0 disables the cap (not recommended in
+// prod — protects clients from N×slow-channel hangs).
+var ChannelExhaustiveRetryTotalTimeoutSeconds = 30
+
+func GetChannelExhaustiveRetryTimeout() time.Duration {
+	if ChannelExhaustiveRetryTotalTimeoutSeconds <= 0 {
+		return 0
+	}
+	return time.Duration(ChannelExhaustiveRetryTotalTimeoutSeconds) * time.Second
+}
 
 // 额度展示类型
 const (

@@ -204,6 +204,79 @@ func CacheGetChannel(id int) (*Channel, error) {
 	return c, nil
 }
 
+// GetAllSatisfiedChannels returns all enabled channels matching (group, modelName)
+// ordered by priority DESC.
+//
+// Within-tier ordering differs by backend (intentional in Phase 1, planned to
+// converge):
+//   - In-memory cache path: random shuffle within tier (weight currently ignored).
+//   - DB-backed path (MemoryCacheEnabled=false): `priority DESC, weight DESC` —
+//     deterministic by weight, no shuffle.
+//
+// Both paths return the full candidate set across all priority tiers; the
+// exhaustive-retry loop in controller/relay.go tries each in returned order
+// until success / hard-skip / total timeout. Weight-aware in-memory ordering is
+// a follow-up.
+//
+// Per Hermerz/Hermes#78: replaces the priority-tier-per-retry indexing used by
+// GetRandomSatisfiedChannel (where each retry advanced one tier and skipped the
+// remaining channels in the previous tier).
+func GetAllSatisfiedChannels(group string, modelName string) ([]*Channel, error) {
+	if !common.MemoryCacheEnabled {
+		return getAllSatisfiedChannelsFromDB(group, modelName)
+	}
+
+	channelSyncLock.RLock()
+	defer channelSyncLock.RUnlock()
+
+	channels := group2model2channels[group][modelName]
+	if len(channels) == 0 {
+		normalizedModel := ratio_setting.FormatMatchingModelName(modelName)
+		channels = group2model2channels[group][normalizedModel]
+	}
+	if len(channels) == 0 {
+		return nil, nil
+	}
+
+	type candidate struct {
+		ch       *Channel
+		priority int64
+	}
+	all := make([]candidate, 0, len(channels))
+	for _, id := range channels {
+		ch, ok := channelsIDM[id]
+		if !ok {
+			return nil, fmt.Errorf("数据库一致性错误，渠道# %d 不存在，请联系管理员修复", id)
+		}
+		all = append(all, candidate{ch: ch, priority: ch.GetPriority()})
+	}
+
+	sort.SliceStable(all, func(i, j int) bool {
+		return all[i].priority > all[j].priority
+	})
+
+	result := make([]*Channel, 0, len(all))
+	i := 0
+	for i < len(all) {
+		j := i
+		for j < len(all) && all[j].priority == all[i].priority {
+			j++
+		}
+		tier := all[i:j]
+		if len(tier) > 1 {
+			rand.Shuffle(len(tier), func(a, b int) {
+				tier[a], tier[b] = tier[b], tier[a]
+			})
+		}
+		for _, c := range tier {
+			result = append(result, c.ch)
+		}
+		i = j
+	}
+
+	return result, nil
+}
+
 func CacheGetChannelInfo(id int) (*ChannelInfo, error) {
 	if !common.MemoryCacheEnabled {
 		channel, err := GetChannelById(id, true)

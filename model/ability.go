@@ -58,6 +58,47 @@ func GetAllEnableAbilities() []Ability {
 	return abilities
 }
 
+// getAllSatisfiedChannelsFromDB returns all enabled channels matching
+// (group, model) ordered priority DESC, weight DESC. Used by
+// GetAllSatisfiedChannels when MemoryCacheEnabled=false, per
+// Hermerz/Hermes#78 Codex review Critical 2.
+//
+// Unlike getChannelQuery which filters to a single priority tier per call
+// (because the legacy retry loop indexed by `retry`), this function returns
+// the full candidate set across all priority tiers — the exhaustive-retry
+// loop in controller/relay.go tries each in order.
+func getAllSatisfiedChannelsFromDB(group string, modelName string) ([]*Channel, error) {
+	var abilities []Ability
+	err := DB.Model(&Ability{}).
+		Where(commonGroupCol+" = ? and model = ? and enabled = ?", group, modelName, true).
+		Order("priority DESC, weight DESC").
+		Find(&abilities).Error
+	if err != nil {
+		return nil, err
+	}
+	if len(abilities) == 0 {
+		return nil, nil
+	}
+
+	channels := make([]*Channel, 0, len(abilities))
+	seen := make(map[int]bool, len(abilities))
+	for _, ab := range abilities {
+		if seen[ab.ChannelId] {
+			continue
+		}
+		seen[ab.ChannelId] = true
+		ch := &Channel{}
+		if err := DB.First(ch, ab.ChannelId).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				continue
+			}
+			return nil, err
+		}
+		channels = append(channels, ch)
+	}
+	return channels, nil
+}
+
 func getPriority(group string, model string, retry int) (int, error) {
 
 	var priorities []int
