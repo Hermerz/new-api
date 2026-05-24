@@ -798,13 +798,30 @@ export const getChannelsColumns = ({
               </SplitButtonGroup>
 
               {record.status === 1 ? (
-                <Button
-                  type='danger'
-                  size='small'
-                  onClick={() => manageChannel(record.id, 'disable', record)}
-                >
-                  {t('禁用')}
-                </Button>
+                <>
+                  <Tooltip
+                    content={t(
+                      '渠道将被禁用；若已开启自动检测，系统会定时探测，恢复正常后自动启用',
+                    )}
+                  >
+                    <Button
+                      type='warning'
+                      size='small'
+                      onClick={() =>
+                        manageChannel(record.id, 'temp_disable', record)
+                      }
+                    >
+                      {t('暂时禁用')}
+                    </Button>
+                  </Tooltip>
+                  <Button
+                    type='danger'
+                    size='small'
+                    onClick={() => manageChannel(record.id, 'disable', record)}
+                  >
+                    {t('禁用')}
+                  </Button>
+                </>
               ) : (
                 <Button
                   size='small'

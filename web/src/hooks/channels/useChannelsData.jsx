@@ -455,6 +455,25 @@ export const useChannelsData = () => {
         data.status = 2;
         res = await API.put('/api/channel/', data);
         break;
+      case 'temp_disable':
+        // Hermerz/Hermes#37 P1(a): status=3 (auto-disabled). Reuses the existing
+        // AutomaticallyTestChannels scheduler path which probes status=3
+        // channels and re-enables them on probe success, giving BD a "disable
+        // until upstream recovers" action without needing periodic manual checks.
+        //
+        // status_reason + status_time mirror the schema written by the backend
+        // auto-ban path (model.UpdateChannelStatus). Status display at
+        // ChannelsColumnDefs renders these in a tooltip; without them, BD-
+        // triggered status=3 channels would show stale reason from a prior
+        // auto-ban or `undefined`.
+        data.status = 3;
+        data.other_info = JSON.stringify({
+          ...(record?.other_info ? JSON.parse(record.other_info) : {}),
+          status_reason: t('BD 手动暂时禁用，等待自动恢复'),
+          status_time: Math.floor(Date.now() / 1000),
+        });
+        res = await API.put('/api/channel/', data);
+        break;
       case 'priority':
         if (value === '') return;
         data.priority = parseInt(value);
