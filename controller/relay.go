@@ -680,6 +680,11 @@ func RelayTask(c *gin.Context) {
 		if !shouldRetryTaskRelay(c, channel.Id, taskErr, common.RetryTimes-retryParam.GetRetry()) {
 			break
 		}
+		// Hermerz/Hermes#89: same affinity-clearing semantics as the main
+		// relay loop. Default rules (codex / claude cli trace) don't match
+		// task paths today, but admins may add custom rules on task paths
+		// later — keep the two retry paths consistent.
+		service.MarkChannelAffinityFailed(c)
 	}
 
 	useChannel := c.GetStringSlice("use_channel")
