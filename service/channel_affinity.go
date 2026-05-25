@@ -636,6 +636,35 @@ func ShouldSkipRetryAfterChannelAffinityFailure(c *gin.Context) bool {
 	return meta.SkipRetry
 }
 
+// MarkChannelAffinityFailed deletes the affinity cache entry for the current
+// request so a subsequent request from the same conversation goes through
+// fresh priority-based channel selection instead of sticking to the failed
+// channel. Hermerz/Hermes#89.
+//
+// Call from the relay retry loop after a channel attempt fails AND the loop
+// is going to try another candidate. If retry succeeds on another channel,
+// RecordChannelAffinity (with SwitchOnSuccess=true, the default) overwrites
+// the cleared entry with the new successful channel. If all retries fail,
+// the entry stays cleared and the next request from the same conversation
+// hits normal priority selection — avoiding repeated wasted attempts on the
+// known-bad channel.
+//
+// No-op when no affinity context is set (rule did not match) or when the
+// entry is already absent.
+func MarkChannelAffinityFailed(c *gin.Context) {
+	if c == nil {
+		return
+	}
+	cacheKey, _, ok := getChannelAffinityContext(c)
+	if !ok {
+		return
+	}
+	cache := getChannelAffinityCache()
+	if _, err := cache.DeleteMany([]string{cacheKey}); err != nil {
+		common.SysError(fmt.Sprintf("channel affinity cache delete failed: key=%s, err=%v", cacheKey, err))
+	}
+}
+
 func MarkChannelAffinityUsed(c *gin.Context, selectedGroup string, channelID int) {
 	if c == nil || channelID <= 0 {
 		return

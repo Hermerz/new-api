@@ -296,6 +296,11 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 			if !shouldRetry(c, setupErr, len(candidates)-idx-1) {
 				break
 			}
+			// Hermerz/Hermes#89: about to retry on a different candidate — clear
+			// the affinity entry so SwitchOnSuccess can overwrite cleanly (on
+			// success) or it stays cleared (on all-fail), avoiding wasted
+			// attempts on the known-bad channel for subsequent requests.
+			service.MarkChannelAffinityFailed(c)
 			continue
 		}
 
@@ -345,6 +350,9 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		if !shouldRetry(c, newAPIError, remaining) {
 			break
 		}
+		// Hermerz/Hermes#89: about to retry on a different candidate — see
+		// MarkChannelAffinityFailed doc for rationale.
+		service.MarkChannelAffinityFailed(c)
 	}
 
 	useChannel := c.GetStringSlice("use_channel")
@@ -672,6 +680,11 @@ func RelayTask(c *gin.Context) {
 		if !shouldRetryTaskRelay(c, channel.Id, taskErr, common.RetryTimes-retryParam.GetRetry()) {
 			break
 		}
+		// Hermerz/Hermes#89: same affinity-clearing semantics as the main
+		// relay loop. Default rules (codex / claude cli trace) don't match
+		// task paths today, but admins may add custom rules on task paths
+		// later — keep the two retry paths consistent.
+		service.MarkChannelAffinityFailed(c)
 	}
 
 	useChannel := c.GetStringSlice("use_channel")
