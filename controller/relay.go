@@ -324,6 +324,8 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		}
 
 		if newAPIError == nil {
+			// Hermerz/Hermes#37 P1(b): per-channel success counter for health monitoring.
+			service.RecordChannelSuccess(channel.Id)
 			relayInfo.LastError = nil
 			return
 		}
@@ -332,6 +334,8 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		relayInfo.LastError = newAPIError
 
 		processChannelError(c, *types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey, common.GetContextKeyString(c, constant.ContextKeyChannelKey), channel.GetAutoBan()), newAPIError)
+		// Hermerz/Hermes#37 P1(b): per-channel error counter (+ status-code breakdown).
+		service.RecordChannelError(channel.Id, newAPIError.StatusCode)
 
 		// Pass `remaining` so shouldRetry's retryTimes<=0 short-circuit only fires
 		// when we genuinely have no more candidates to try (i.e., we're on the
