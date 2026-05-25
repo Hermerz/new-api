@@ -296,6 +296,11 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 			if !shouldRetry(c, setupErr, len(candidates)-idx-1) {
 				break
 			}
+			// Hermerz/Hermes#89: about to retry on a different candidate — clear
+			// the affinity entry so SwitchOnSuccess can overwrite cleanly (on
+			// success) or it stays cleared (on all-fail), avoiding wasted
+			// attempts on the known-bad channel for subsequent requests.
+			service.MarkChannelAffinityFailed(c)
 			continue
 		}
 
@@ -345,6 +350,9 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		if !shouldRetry(c, newAPIError, remaining) {
 			break
 		}
+		// Hermerz/Hermes#89: about to retry on a different candidate — see
+		// MarkChannelAffinityFailed doc for rationale.
+		service.MarkChannelAffinityFailed(c)
 	}
 
 	useChannel := c.GetStringSlice("use_channel")
