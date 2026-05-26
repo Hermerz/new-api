@@ -174,6 +174,67 @@ type RelayInfo struct {
 	*TaskRelayInfo
 }
 
+// ResetForChannelRetry clears per-attempt RelayInfo state so it does not leak
+// from a failed candidate channel to the next one in the candidates-exhaustive
+// retry loop introduced by Hermerz/Hermes#78. Follow-up Hermerz/Hermes#79.
+//
+// Call from the retry loop after shouldRetry returns true (i.e., the current
+// attempt failed and the loop is about to try the next candidate). Each
+// adaptor repopulates the fields it needs as it processes the next attempt;
+// what stays untouched is request-level state that must remain invariant
+// across attempts (user identity, original request body, billing session).
+//
+// What IS reset (per-attempt state):
+//
+//	Channel-config overrides set by override.go for the previous channel:
+//	  RuntimeHeadersOverride, UseRuntimeHeadersOverride, ParamOverrideAudit
+//	Conversion bookkeeping set by adaptors via AppendRequestConversion:
+//	  RequestConversionChain, FinalRequestRelayFormat
+//	Per-attempt streaming counters / first-response markers:
+//	  FirstResponseTime, isFirstResponse, SendResponseCount,
+//	  ReceivedResponseCount, StreamStatus, AudioUsage
+//	Intermediate conversion state safely zero-able by value:
+//	  ThinkingContentInfo
+//
+// What is NOT reset (cross-attempt invariants OR pointer-embedded structs
+// whose nil deref would panic in adaptors that read promoted fields):
+//   - User/token identity (TokenId, UserId, UserGroup, ...)
+//   - Original request data (Request, RequestURLPath, RequestHeaders, ...)
+//   - Original incoming RelayFormat
+//   - Billing session (Billing, BillingSource, Subscription*, PriceData)
+//   - Retry index + LastError (explicitly managed by the retry loop itself)
+//   - ChannelMeta (reset separately by InitChannelMeta() on each attempt
+//     via SetupContextForSelectedChannel)
+//   - TokenCountMeta (set once at request prep)
+//   - Audio/realtime config + WebSocket connections (set once at request start)
+//   - *ClaudeConvertInfo / *ResponsesUsageInfo: pointer-embedded; nilling
+//     them would crash adaptors that deref promoted fields without nil-check
+//     (e.g., OpenAI stream path reads ClaudeConvertInfo for Claude-format
+//     requests retried onto an OpenAI channel). Their cross-attempt leak is
+//     accepted as the lesser evil; revisit when adaptor init guarantees
+//     per-attempt re-construction.
+func (info *RelayInfo) ResetForChannelRetry() {
+	// Channel-config overrides (Codex review H-2)
+	info.RuntimeHeadersOverride = nil
+	info.UseRuntimeHeadersOverride = false
+	info.ParamOverrideAudit = nil
+
+	// Conversion bookkeeping (Codex review H-2)
+	info.RequestConversionChain = nil
+	info.FinalRequestRelayFormat = ""
+
+	// Per-attempt streaming counters / first-response markers
+	info.FirstResponseTime = time.Time{}
+	info.isFirstResponse = false
+	info.SendResponseCount = 0
+	info.ReceivedResponseCount = 0
+	info.StreamStatus = nil
+	info.AudioUsage = false
+
+	// Intermediate conversion state safely zero-able by value (no nil deref risk)
+	info.ThinkingContentInfo = ThinkingContentInfo{}
+}
+
 func (info *RelayInfo) InitChannelMeta(c *gin.Context) {
 	channelType := common.GetContextKeyInt(c, constant.ContextKeyChannelType)
 	paramOverride := common.GetContextKeyStringMap(c, constant.ContextKeyChannelParamOverride)
