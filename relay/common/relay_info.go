@@ -193,10 +193,11 @@ type RelayInfo struct {
 //	Per-attempt streaming counters / first-response markers:
 //	  FirstResponseTime, isFirstResponse, SendResponseCount,
 //	  ReceivedResponseCount, StreamStatus, AudioUsage
-//	Intermediate conversion state populated by adaptors:
-//	  ThinkingContentInfo, ClaudeConvertInfo, ResponsesUsageInfo
+//	Intermediate conversion state safely zero-able by value:
+//	  ThinkingContentInfo
 //
-// What is NOT reset (cross-attempt invariants):
+// What is NOT reset (cross-attempt invariants OR pointer-embedded structs
+// whose nil deref would panic in adaptors that read promoted fields):
 //   - User/token identity (TokenId, UserId, UserGroup, ...)
 //   - Original request data (Request, RequestURLPath, RequestHeaders, ...)
 //   - Original incoming RelayFormat
@@ -206,6 +207,12 @@ type RelayInfo struct {
 //     via SetupContextForSelectedChannel)
 //   - TokenCountMeta (set once at request prep)
 //   - Audio/realtime config + WebSocket connections (set once at request start)
+//   - *ClaudeConvertInfo / *ResponsesUsageInfo: pointer-embedded; nilling
+//     them would crash adaptors that deref promoted fields without nil-check
+//     (e.g., OpenAI stream path reads ClaudeConvertInfo for Claude-format
+//     requests retried onto an OpenAI channel). Their cross-attempt leak is
+//     accepted as the lesser evil; revisit when adaptor init guarantees
+//     per-attempt re-construction.
 func (info *RelayInfo) ResetForChannelRetry() {
 	// Channel-config overrides (Codex review H-2)
 	info.RuntimeHeadersOverride = nil
@@ -224,10 +231,8 @@ func (info *RelayInfo) ResetForChannelRetry() {
 	info.StreamStatus = nil
 	info.AudioUsage = false
 
-	// Intermediate conversion state populated by adaptors
+	// Intermediate conversion state safely zero-able by value (no nil deref risk)
 	info.ThinkingContentInfo = ThinkingContentInfo{}
-	info.ClaudeConvertInfo = nil
-	info.ResponsesUsageInfo = nil
 }
 
 func (info *RelayInfo) InitChannelMeta(c *gin.Context) {

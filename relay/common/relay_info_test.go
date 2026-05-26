@@ -62,10 +62,12 @@ func TestResetForChannelRetry_ClearsPerAttemptFields(t *testing.T) {
 		StreamStatus:          NewStreamStatus(),
 		AudioUsage:            true,
 
-		// Intermediate conversion state
+		// Intermediate conversion state — only ThinkingContentInfo (value type)
+		// is reset; pointer-embedded ClaudeConvertInfo/ResponsesUsageInfo are
+		// intentionally preserved (nilling them would panic OpenAI stream path
+		// when it reads promoted ClaudeConvertInfo fields on a Claude-format
+		// request retried onto an OpenAI channel — Codex review finding).
 		ThinkingContentInfo: ThinkingContentInfo{IsFirstThinkingContent: true},
-		ClaudeConvertInfo:   &ClaudeConvertInfo{},
-		ResponsesUsageInfo:  &ResponsesUsageInfo{},
 	}
 
 	info.ResetForChannelRetry()
@@ -87,10 +89,27 @@ func TestResetForChannelRetry_ClearsPerAttemptFields(t *testing.T) {
 	require.Nil(t, info.StreamStatus)
 	require.False(t, info.AudioUsage)
 
-	// Intermediate conversion state
+	// ThinkingContentInfo (value type) zeroed
 	require.Equal(t, ThinkingContentInfo{}, info.ThinkingContentInfo)
-	require.Nil(t, info.ClaudeConvertInfo)
-	require.Nil(t, info.ResponsesUsageInfo)
+}
+
+// TestResetForChannelRetry_PreservesPointerEmbeddedStructs verifies that
+// *ClaudeConvertInfo and *ResponsesUsageInfo are intentionally NOT nilled
+// by the reset, because adaptors (notably OpenAI stream path) deref their
+// promoted fields without nil-check and would panic on retry of a
+// Claude-format request onto an OpenAI channel. Hermerz/Hermes#79.
+func TestResetForChannelRetry_PreservesPointerEmbeddedStructs(t *testing.T) {
+	claudeInfo := &ClaudeConvertInfo{LastMessagesType: LastMessageTypeText, Index: 5}
+	responsesInfo := &ResponsesUsageInfo{BuiltInTools: map[string]*BuildInToolInfo{"web_search": {ToolName: "web_search"}}}
+	info := &RelayInfo{
+		ClaudeConvertInfo:  claudeInfo,
+		ResponsesUsageInfo: responsesInfo,
+	}
+
+	info.ResetForChannelRetry()
+
+	require.Same(t, claudeInfo, info.ClaudeConvertInfo)
+	require.Same(t, responsesInfo, info.ResponsesUsageInfo)
 }
 
 // TestResetForChannelRetry_PreservesCrossAttemptFields verifies that fields
