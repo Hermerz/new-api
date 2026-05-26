@@ -301,6 +301,10 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 			// success) or it stays cleared (on all-fail), avoiding wasted
 			// attempts on the known-bad channel for subsequent requests.
 			service.MarkChannelAffinityFailed(c)
+			// Hermerz/Hermes#79: reset per-attempt RelayInfo state so the
+			// previous candidate's overrides/conversion chain/streaming
+			// counters do not leak into the next attempt.
+			relayInfo.ResetForChannelRetry()
 			continue
 		}
 
@@ -353,6 +357,10 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		// Hermerz/Hermes#89: about to retry on a different candidate — see
 		// MarkChannelAffinityFailed doc for rationale.
 		service.MarkChannelAffinityFailed(c)
+		// Hermerz/Hermes#79: reset per-attempt RelayInfo state so the previous
+		// candidate's overrides/conversion chain/streaming counters do not
+		// leak into the next attempt.
+		relayInfo.ResetForChannelRetry()
 	}
 
 	useChannel := c.GetStringSlice("use_channel")
@@ -685,6 +693,10 @@ func RelayTask(c *gin.Context) {
 		// task paths today, but admins may add custom rules on task paths
 		// later — keep the two retry paths consistent.
 		service.MarkChannelAffinityFailed(c)
+		// Hermerz/Hermes#79: reset per-attempt RelayInfo state so the previous
+		// candidate's overrides/conversion chain do not leak into the next
+		// task attempt.
+		relayInfo.ResetForChannelRetry()
 	}
 
 	useChannel := c.GetStringSlice("use_channel")
