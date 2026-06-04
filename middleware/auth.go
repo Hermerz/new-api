@@ -188,6 +188,21 @@ func authHelper(c *gin.Context, minRole int) {
 
 func TryUserAuth() func(c *gin.Context) {
 	return func(c *gin.Context) {
+		// X-Hermes-Token fast path: HermesTokenAuth (global on /api) injected
+		// hermes_user_id. Resolve it to id/group so optional-auth handlers like
+		// GetPricing see the proxied Hermes user. Without this, requests via the
+		// Hermes gateway carry no session cookie → group="" → no per-model
+		// discount in the catalog (Hermerz/Hermes#127). Best-effort: never abort,
+		// fall through to the session check on any miss.
+		if hermesUID := GetHermesUserID(c); hermesUID != 0 {
+			if user, err := model.GetUserById(hermesUID, false); err == nil && user != nil {
+				c.Set("id", user.Id)
+				c.Set("group", user.Group)
+				c.Set("user_group", user.Group)
+				c.Next()
+				return
+			}
+		}
 		session := sessions.Default(c)
 		id := session.Get("id")
 		if id != nil {
