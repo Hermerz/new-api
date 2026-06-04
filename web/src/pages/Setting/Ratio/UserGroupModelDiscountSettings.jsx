@@ -32,20 +32,20 @@ import {
 const { Text, Paragraph } = Typography;
 
 // Backend setting key — see setting/ratio_setting/user_group_discount.go
-// (Hermerz/new-api#3). Storage shape is map[string]map[string]float64:
-// group → model → discount (0~1, where 0.2 = 2折).
+// (Hermerz/Hermes#127). Storage shape is group → ORDERED rule array:
+// [{ pattern, discount }], first matching rule wins. The legacy
+// group → model → discount map shape is still accepted on load.
 const OPTION_KEY =
   'user_group_model_discount_setting.user_group_model_discount';
 
 const EXAMPLE_JSON = `{
-  "default": {
-    "gpt-5": 0.2,
-    "claude-opus": 0.4
-  },
-  "enterprise": {
-    "gpt-5": 0.4,
-    "claude-opus": 0.6
-  }
+  "personal-standard": [
+    { "pattern": "*pro-thinking*", "discount": 0.45 },
+    { "pattern": "gpt*", "discount": 0.30 },
+    { "pattern": "claude*", "discount": 0.35 },
+    { "pattern": "gemini*", "discount": 0.35 },
+    { "pattern": "deepseek*", "discount": 0.50 }
+  ]
 }`;
 
 export default function UserGroupModelDiscountSettings(props) {
@@ -80,22 +80,41 @@ export default function UserGroupModelDiscountSettings(props) {
     // GroupRatio = 0 instead.
     if (value.trim()) {
       const parsed = JSON.parse(value);
+      const rejectDiscount = (group, label, discount) =>
+        showError(
+          t(
+            'discount 必须 > 0（group={{group}}, {{label}}, 当前值={{value}}）：≤ 0 的值会被后端当作 "未配置" sentinel，悄悄回退到 GroupRatio。免费模型请用专属 channel group + GroupRatio=0。',
+            { group, label, value: discount },
+          ),
+        );
       for (const group of Object.keys(parsed || {})) {
-        const models = parsed[group] || {};
-        for (const model of Object.keys(models)) {
-          const discount = models[model];
-          if (typeof discount === 'number' && discount <= 0) {
-            return showError(
-              t(
-                'discount 必须 > 0（group={{group}}, model={{model}}, 当前值={{value}}）：≤ 0 的值会被后端当作 "未配置" sentinel，悄悄回退到 GroupRatio。免费模型请用专属 channel group + GroupRatio=0。',
-                {
+        const rules = parsed[group];
+        if (Array.isArray(rules)) {
+          // Canonical shape: [{ pattern, discount }]
+          for (const rule of rules) {
+            if (!rule || typeof rule.pattern !== 'string') {
+              return showError(
+                t('每条规则需为 {pattern: 字符串, discount: 数字}（group={{group}}）', {
                   group,
-                  model,
-                  value: discount,
-                },
-              ),
-            );
+                }),
+              );
+            }
+            if (!Number.isFinite(rule.discount) || rule.discount <= 0) {
+              return rejectDiscount(group, `pattern=${rule.pattern}`, rule.discount);
+            }
           }
+        } else if (rules && typeof rules === 'object') {
+          // Legacy shape: { model: discount }
+          for (const model of Object.keys(rules)) {
+            const discount = rules[model];
+            if (!Number.isFinite(discount) || discount <= 0) {
+              return rejectDiscount(group, `model=${model}`, discount);
+            }
+          }
+        } else {
+          return showError(
+            t('group {{group}} 的值必须是规则数组 [{pattern, discount}]', { group }),
+          );
         }
       }
     }
@@ -150,12 +169,14 @@ export default function UserGroupModelDiscountSettings(props) {
             <li>
               <Text strong>group</Text>:{' '}
               {t(
-                '用户分组名，需与 User 表 group 字段一致（如 default / enterprise）',
+                '用户分组名，需与 User 表 group 字段一致（如 default / enterprise / personal-standard）',
               )}
             </li>
             <li>
-              <Text strong>model</Text>:{' '}
-              {t('模型名，支持 *-openai-compact 通配符（与 ModelRatio 一致）')}
+              <Text strong>pattern</Text>:{' '}
+              {t(
+                '模型名通配符，* 匹配任意字符：前缀 gpt*、后缀 *-preview、包含 *embedding*、中间 gpt*pro 均可。大小写不敏感。',
+              )}
             </li>
             <li>
               <Text strong>discount</Text>:{' '}
@@ -164,6 +185,11 @@ export default function UserGroupModelDiscountSettings(props) {
               )}
             </li>
           </ul>
+        </Paragraph>
+        <Paragraph type='tertiary' style={{ marginBottom: 12 }}>
+          {t(
+            '匹配顺序（重要）：每个分组是一个有序规则数组，从上到下第一个命中 pattern 的规则生效。请把更具体的规则放在更宽泛的规则之前（如 gpt-5.4 放在 gpt* 之前、*pro* 放在 gpt* 之前）。',
+          )}
         </Paragraph>
         <Paragraph type='tertiary' style={{ marginBottom: 12 }}>
           {t(

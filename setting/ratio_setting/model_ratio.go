@@ -410,6 +410,24 @@ func GetModelRatio(name string) (float64, bool, string) {
 	return ratio, true, name
 }
 
+// IsModelRatioConfigured reports whether the model has an explicit entry in the
+// ModelRatio map (or the compact wildcard), INDEPENDENT of SelfUseModeEnabled.
+// Pricing catalogs use this to distinguish a real price from the unpriced 37.5
+// fallback sentinel (Hermerz/Hermes#127): GetModelRatio's success flag conflates
+// "found" with self-use mode (line 408) and must not drive that decision.
+func IsModelRatioConfigured(name string) bool {
+	name = FormatMatchingModelName(name)
+	if _, ok := modelRatioMap.Get(name); ok {
+		return true
+	}
+	if strings.HasSuffix(name, CompactModelSuffix) {
+		if _, ok := modelRatioMap.Get(CompactWildcardModelKey); ok {
+			return true
+		}
+	}
+	return false
+}
+
 func DefaultModelRatio2JSONString() string {
 	jsonBytes, err := common.Marshal(defaultModelRatio)
 	if err != nil {

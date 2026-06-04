@@ -6,176 +6,284 @@ import (
 
 // Tests for GetUserGroupModelDiscount.
 //
-// Because the package-level userGroupModelDiscountMap is a singleton initialized
-// in init() with an empty default, each test starts from a known empty state via
-// userGroupModelDiscountMap.Clear() and then loads its own fixture data. Tests
+// The package-level userGroupModelDiscount store is a singleton. Each test loads
+// its own fixture via UpdateUserGroupModelDiscountByJSONString (which accepts the
+// canonical array shape and the legacy map shape) and Clears on cleanup. Tests
 // are NOT t.Parallel() — they share the singleton.
 
-func resetUserGroupModelDiscount(t *testing.T, fixture map[string]map[string]float64) {
+func loadDiscount(t *testing.T, jsonStr string) {
 	t.Helper()
-	userGroupModelDiscountMap.Clear()
-	if fixture != nil {
-		userGroupModelDiscountMap.AddAll(fixture)
+	if err := UpdateUserGroupModelDiscountByJSONString(jsonStr); err != nil {
+		t.Fatalf("load fixture failed: %v", err)
 	}
-	t.Cleanup(func() { userGroupModelDiscountMap.Clear() })
+	t.Cleanup(func() { userGroupModelDiscount.Clear() })
 }
 
-func TestGetUserGroupModelDiscount_EmptyMap_ReturnsNoOp(t *testing.T) {
-	resetUserGroupModelDiscount(t, nil)
+func TestGetUserGroupModelDiscount_EmptyStore_ReturnsNoOp(t *testing.T) {
+	userGroupModelDiscount.Clear()
+	t.Cleanup(func() { userGroupModelDiscount.Clear() })
 
 	got, ok := GetUserGroupModelDiscount("default", "gpt-5")
 
-	if ok {
-		t.Errorf("expected ok=false on empty map, got ok=true (discount=%v)", got)
-	}
-	if got != 1.0 {
-		t.Errorf("expected discount=1.0 (no-op) on empty map, got %v", got)
-	}
-}
-
-func TestGetUserGroupModelDiscount_GroupExistsModelMissing_ReturnsNoOp(t *testing.T) {
-	resetUserGroupModelDiscount(t, map[string]map[string]float64{
-		"default": {"gpt-5": 0.20},
-	})
-
-	got, ok := GetUserGroupModelDiscount("default", "claude-opus")
-
-	if ok {
-		t.Errorf("expected ok=false when model not in map, got ok=true (discount=%v)", got)
-	}
-	if got != 1.0 {
-		t.Errorf("expected discount=1.0 when model not in map, got %v", got)
-	}
-}
-
-func TestGetUserGroupModelDiscount_ExactMatch_ReturnsDiscount(t *testing.T) {
-	resetUserGroupModelDiscount(t, map[string]map[string]float64{
-		"default":    {"gpt-5": 0.20, "claude-opus": 0.40},
-		"enterprise": {"gpt-5": 0.40, "claude-opus": 0.60},
-	})
-
-	cases := []struct {
-		group, model string
-		want         float64
-	}{
-		{"default", "gpt-5", 0.20},
-		{"default", "claude-opus", 0.40},
-		{"enterprise", "gpt-5", 0.40},
-		{"enterprise", "claude-opus", 0.60},
-	}
-
-	for _, c := range cases {
-		got, ok := GetUserGroupModelDiscount(c.group, c.model)
-		if !ok || got != c.want {
-			t.Errorf("group=%s model=%s: got (%v, %v), want (%v, true)", c.group, c.model, got, ok, c.want)
-		}
+	if ok || got != 1.0 {
+		t.Errorf("empty store: got (%v, %v), want (1.0, false)", got, ok)
 	}
 }
 
 func TestGetUserGroupModelDiscount_UnknownGroup_ReturnsNoOp(t *testing.T) {
-	resetUserGroupModelDiscount(t, map[string]map[string]float64{
-		"default": {"gpt-5": 0.20},
-	})
+	loadDiscount(t, `{"default": [{"pattern":"gpt*","discount":0.20}]}`)
 
 	got, ok := GetUserGroupModelDiscount("nonexistent-group", "gpt-5")
 
-	if ok {
-		t.Errorf("expected ok=false for unknown group, got ok=true (discount=%v)", got)
-	}
-	if got != 1.0 {
-		t.Errorf("expected discount=1.0 for unknown group, got %v", got)
+	if ok || got != 1.0 {
+		t.Errorf("unknown group: got (%v, %v), want (1.0, false)", got, ok)
 	}
 }
 
-func TestGetUserGroupModelDiscount_WildcardCompactSuffix_Matches(t *testing.T) {
-	// Wildcard pattern '*-openai-compact' applies when the requested model
-	// ends in the compact suffix and no exact match exists. Mirrors
-	// GetModelRatio's wildcard behavior.
-	resetUserGroupModelDiscount(t, map[string]map[string]float64{
-		"default": {CompactWildcardModelKey: 0.30},
-	})
+func TestGetUserGroupModelDiscount_NoMatch_ReturnsNoOp(t *testing.T) {
+	loadDiscount(t, `{"default": [{"pattern":"gpt*","discount":0.20}]}`)
 
-	modelName := "some-custom-model" + CompactModelSuffix
-	got, ok := GetUserGroupModelDiscount("default", modelName)
+	got, ok := GetUserGroupModelDiscount("default", "claude-opus-4")
 
-	if !ok {
-		t.Fatalf("expected wildcard match, got ok=false")
-	}
-	if got != 0.30 {
-		t.Errorf("expected discount=0.30 via wildcard, got %v", got)
+	if ok || got != 1.0 {
+		t.Errorf("no matching rule: got (%v, %v), want (1.0, false)", got, ok)
 	}
 }
 
-func TestGetUserGroupModelDiscount_ExactBeatsWildcard(t *testing.T) {
-	// If both an exact match and a wildcard match are possible, exact wins.
-	exactModel := "gpt-5" + CompactModelSuffix
-	resetUserGroupModelDiscount(t, map[string]map[string]float64{
-		"default": {
-			exactModel:              0.10, // exact match
-			CompactWildcardModelKey: 0.30, // wildcard fallback
-		},
-	})
+func TestGetUserGroupModelDiscount_PrefixGlob(t *testing.T) {
+	loadDiscount(t, `{"personal-standard": [
+		{"pattern":"gpt*","discount":0.30},
+		{"pattern":"claude*","discount":0.35},
+		{"pattern":"deepseek*","discount":0.50}
+	]}`)
 
-	got, ok := GetUserGroupModelDiscount("default", exactModel)
-
-	if !ok || got != 0.10 {
-		t.Errorf("expected exact match to win (0.10, true), got (%v, %v)", got, ok)
+	cases := []struct {
+		model string
+		want  float64
+	}{
+		{"gpt-4o", 0.30},
+		{"gpt-5.4-pro", 0.30},
+		{"claude-opus-4-6", 0.35},
+		{"deepseek-chat", 0.50},
+		{"deepseek-reasoner", 0.50},
+	}
+	for _, c := range cases {
+		got, ok := GetUserGroupModelDiscount("personal-standard", c.model)
+		if !ok || got != c.want {
+			t.Errorf("model=%s: got (%v, %v), want (%v, true)", c.model, got, ok, c.want)
+		}
 	}
 }
 
-func TestGetUserGroupModelDiscount_NilModelMap_HandledSafely(t *testing.T) {
-	// Defensive: if a group key ever maps to nil (corrupt JSON / partial load),
-	// we should fall back to no-op rather than panic.
-	userGroupModelDiscountMap.Clear()
-	userGroupModelDiscountMap.Set("broken-group", nil)
-	t.Cleanup(func() { userGroupModelDiscountMap.Clear() })
+func TestGetUserGroupModelDiscount_SuffixAndContainsGlob(t *testing.T) {
+	loadDiscount(t, `{"default": [
+		{"pattern":"*-openai-compact","discount":0.30},
+		{"pattern":"*embedding*","discount":0.80}
+	]}`)
 
-	got, ok := GetUserGroupModelDiscount("broken-group", "gpt-5")
-
-	if ok {
-		t.Errorf("expected ok=false for nil model map, got ok=true (discount=%v)", got)
+	if got, ok := GetUserGroupModelDiscount("default", "some-model-openai-compact"); !ok || got != 0.30 {
+		t.Errorf("suffix glob: got (%v, %v), want (0.30, true)", got, ok)
 	}
-	if got != 1.0 {
-		t.Errorf("expected discount=1.0 for nil model map, got %v", got)
+	if got, ok := GetUserGroupModelDiscount("default", "gemini-embedding-2-preview"); !ok || got != 0.80 {
+		t.Errorf("contains glob: got (%v, %v), want (0.80, true)", got, ok)
 	}
 }
+
+func TestGetUserGroupModelDiscount_OrderedFirstMatchWins(t *testing.T) {
+	// gpt-5-pro matches both *pro* and gpt*. The rule listed first wins.
+	loadDiscount(t, `{"default": [
+		{"pattern":"*pro*","discount":0.45},
+		{"pattern":"gpt*","discount":0.30}
+	]}`)
+	if got, ok := GetUserGroupModelDiscount("default", "gpt-5-pro"); !ok || got != 0.45 {
+		t.Errorf("first-match (*pro* first): got (%v, %v), want (0.45, true)", got, ok)
+	}
+
+	// Reversed order → gpt* now wins for the same model.
+	loadDiscount(t, `{"default": [
+		{"pattern":"gpt*","discount":0.30},
+		{"pattern":"*pro*","discount":0.45}
+	]}`)
+	if got, ok := GetUserGroupModelDiscount("default", "gpt-5-pro"); !ok || got != 0.30 {
+		t.Errorf("first-match (gpt* first): got (%v, %v), want (0.30, true)", got, ok)
+	}
+}
+
+func TestGetUserGroupModelDiscount_CaseInsensitive(t *testing.T) {
+	// Operator wrote capitalized Qwen*; real model names are lower-case.
+	loadDiscount(t, `{"default": [{"pattern":"Qwen*","discount":0.45}]}`)
+
+	if got, ok := GetUserGroupModelDiscount("default", "qwen3-max"); !ok || got != 0.45 {
+		t.Errorf("case-insensitive Qwen*: got (%v, %v), want (0.45, true)", got, ok)
+	}
+}
+
+func TestGetUserGroupModelDiscount_ExactPattern(t *testing.T) {
+	loadDiscount(t, `{"default": [
+		{"pattern":"gpt-5.4","discount":0.10},
+		{"pattern":"gpt*","discount":0.30}
+	]}`)
+
+	if got, ok := GetUserGroupModelDiscount("default", "gpt-5.4"); !ok || got != 0.10 {
+		t.Errorf("exact rule first: got (%v, %v), want (0.10, true)", got, ok)
+	}
+	if got, ok := GetUserGroupModelDiscount("default", "gpt-4o"); !ok || got != 0.30 {
+		t.Errorf("falls to glob: got (%v, %v), want (0.30, true)", got, ok)
+	}
+}
+
+func TestGetUserGroupModelDiscount_NonPositiveRuleSkipped(t *testing.T) {
+	// A discount<=0 rule must not match/shadow a later valid rule (#71).
+	loadDiscount(t, `{"default": [
+		{"pattern":"gpt*","discount":0},
+		{"pattern":"gpt-4o","discount":0.30}
+	]}`)
+
+	if got, ok := GetUserGroupModelDiscount("default", "gpt-4o"); !ok || got != 0.30 {
+		t.Errorf("skip non-positive rule: got (%v, %v), want (0.30, true)", got, ok)
+	}
+	// A model only covered by the 0-discount rule falls through to no-op.
+	if got, ok := GetUserGroupModelDiscount("default", "gpt-5"); ok || got != 1.0 {
+		t.Errorf("only non-positive matches: got (%v, %v), want (1.0, false)", got, ok)
+	}
+}
+
+// --- backward-compat: legacy map shape ------------------------------------
+
+func TestGetUserGroupModelDiscount_LegacyMapShape(t *testing.T) {
+	loadDiscount(t, `{"default": {"gpt-5": 0.20, "claude-opus": 0.40}}`)
+
+	if got, ok := GetUserGroupModelDiscount("default", "gpt-5"); !ok || got != 0.20 {
+		t.Errorf("legacy gpt-5: got (%v, %v), want (0.20, true)", got, ok)
+	}
+	if got, ok := GetUserGroupModelDiscount("default", "claude-opus"); !ok || got != 0.40 {
+		t.Errorf("legacy claude-opus: got (%v, %v), want (0.40, true)", got, ok)
+	}
+}
+
+func TestGetUserGroupModelDiscount_LegacyMap_ExactBeatsGlob(t *testing.T) {
+	// Legacy maps are unordered; specificity sort must make the exact key win.
+	loadDiscount(t, `{"default": {"gpt-4o": 0.10, "gpt*": 0.30}}`)
+
+	if got, ok := GetUserGroupModelDiscount("default", "gpt-4o"); !ok || got != 0.10 {
+		t.Errorf("legacy exact beats glob: got (%v, %v), want (0.10, true)", got, ok)
+	}
+	if got, ok := GetUserGroupModelDiscount("default", "gpt-5"); !ok || got != 0.30 {
+		t.Errorf("legacy glob fallback: got (%v, %v), want (0.30, true)", got, ok)
+	}
+}
+
+func TestGetUserGroupModelDiscount_LegacyCompactWildcard(t *testing.T) {
+	// The old *-openai-compact special case is now just a normal suffix glob.
+	loadDiscount(t, `{"default": {"*-openai-compact": 0.30}}`)
+
+	model := "some-custom-model-openai-compact"
+	if got, ok := GetUserGroupModelDiscount("default", model); !ok || got != 0.30 {
+		t.Errorf("legacy compact wildcard: got (%v, %v), want (0.30, true)", got, ok)
+	}
+}
+
+// --- serialization round-trip + atomicity ---------------------------------
 
 func TestUpdateUserGroupModelDiscountByJSONString_RoundTrip(t *testing.T) {
-	resetUserGroupModelDiscount(t, nil)
+	loadDiscount(t, `{"default":[{"pattern":"gpt*","discount":0.3}]}`)
 
-	jsonStr := `{"default": {"gpt-5": 0.2}, "enterprise": {"gpt-5": 0.4}}`
-	if err := UpdateUserGroupModelDiscountByJSONString(jsonStr); err != nil {
-		t.Fatalf("update failed: %v", err)
-	}
-
-	if got, ok := GetUserGroupModelDiscount("default", "gpt-5"); !ok || got != 0.2 {
-		t.Errorf("default/gpt-5: got (%v, %v), want (0.2, true)", got, ok)
-	}
-	if got, ok := GetUserGroupModelDiscount("enterprise", "gpt-5"); !ok || got != 0.4 {
-		t.Errorf("enterprise/gpt-5: got (%v, %v), want (0.4, true)", got, ok)
+	if got, ok := GetUserGroupModelDiscount("default", "gpt-4o"); !ok || got != 0.3 {
+		t.Errorf("round-trip: got (%v, %v), want (0.3, true)", got, ok)
 	}
 }
 
-func TestUpdateUserGroupModelDiscountByJSONString_MalformedJSON_ReturnsError(t *testing.T) {
-	resetUserGroupModelDiscount(t, map[string]map[string]float64{
-		"default": {"gpt-5": 0.20},
-	})
+func TestUpdateUserGroupModelDiscountByJSONString_MalformedJSON_IsAtomic(t *testing.T) {
+	loadDiscount(t, `{"default":[{"pattern":"gpt*","discount":0.3}]}`)
 
-	err := UpdateUserGroupModelDiscountByJSONString("not-json")
-	if err == nil {
+	if err := UpdateUserGroupModelDiscountByJSONString("not-json"); err == nil {
 		t.Fatal("expected error on malformed JSON, got nil")
 	}
 
-	// Document existing (non-atomic) behavior of types.LoadFromJsonString:
-	// the underlying RWMap is Cleared before Unmarshal, so a parse failure
-	// leaves the map empty rather than untouched. All settings in new-api
-	// share this sharp edge (group_ratio, model_ratio, etc.), so we assert
-	// the current behavior rather than ideal atomicity.
-	//
-	// TODO(Hermerz/new-api): make types.LoadFromJsonString atomic — parse
-	// to a temp map first, only swap on success. Would benefit every setting
-	// caller and remove this footgun for admins pushing malformed JSON.
-	if got, ok := GetUserGroupModelDiscount("default", "gpt-5"); ok || got != 1.0 {
-		t.Errorf("expected map cleared after failed update (current non-atomic behavior): got (%v, %v), want (1.0, false)", got, ok)
+	// Atomic: the prior valid config must survive a failed update (improves on
+	// the old non-atomic LoadFromJsonString footgun).
+	if got, ok := GetUserGroupModelDiscount("default", "gpt-4o"); !ok || got != 0.3 {
+		t.Errorf("config must survive failed update: got (%v, %v), want (0.3, true)", got, ok)
+	}
+}
+
+func TestParseGroupRules_BadShape_ReturnsError(t *testing.T) {
+	if err := UpdateUserGroupModelDiscountByJSONString(`{"default": 0.5}`); err == nil {
+		t.Fatal("expected error for scalar group value, got nil")
+	}
+}
+
+func TestMarshalReparse_CanonicalShapeStable(t *testing.T) {
+	// MarshalJSON must emit the canonical array shape that re-parses to identical
+	// lookups — this is the persistence round-trip the config system relies on
+	// (SaveToDB marshals; boot/admin-save unmarshals).
+	loadDiscount(t, `{"personal-standard": [
+		{"pattern":"gpt-5.4","discount":0.10},
+		{"pattern":"gpt*","discount":0.30},
+		{"pattern":"deepseek*","discount":0.50}
+	]}`)
+
+	serialized := UserGroupModelDiscount2JSONString()
+
+	userGroupModelDiscount.Clear()
+	if err := UpdateUserGroupModelDiscountByJSONString(serialized); err != nil {
+		t.Fatalf("reparse of marshaled output failed: %v", err)
+	}
+
+	cases := []struct {
+		model string
+		want  float64
+	}{
+		{"gpt-5.4", 0.10}, // ordering (exact before glob) survives round-trip
+		{"gpt-4o", 0.30},
+		{"deepseek-chat", 0.50},
+	}
+	for _, c := range cases {
+		if got, ok := GetUserGroupModelDiscount("personal-standard", c.model); !ok || got != c.want {
+			t.Errorf("after reparse model=%s: got (%v, %v), want (%v, true)", c.model, got, ok, c.want)
+		}
+	}
+}
+
+// --- globMatch unit coverage ----------------------------------------------
+
+func TestIsModelRatioConfigured(t *testing.T) {
+	InitRatioSettings() // seed modelRatioMap from defaults (not auto-run in tests)
+	// A model present in the default ModelRatio map (gpt-4.5-preview, legitimately
+	// 37.5) must read as configured; an unknown model must not — independent of
+	// the 37.5 fallback value (Hermerz/Hermes#127 critical-fix).
+	if !IsModelRatioConfigured("gpt-4.5-preview") {
+		t.Errorf("gpt-4.5-preview is in the ratio map; want configured=true")
+	}
+	if IsModelRatioConfigured("totally-unknown-model-xyz-123") {
+		t.Errorf("unknown model must read configured=false")
+	}
+}
+
+func TestGlobMatch(t *testing.T) {
+	cases := []struct {
+		pattern, name string
+		want          bool
+	}{
+		{"gpt*", "gpt-4o", true},
+		{"gpt*", "claude", false},
+		{"*pro", "gpt-5-pro", true},
+		{"*pro", "gpt-5-pro-max", false},
+		{"*pro*", "gpt-5-pro-max", true},
+		{"*pro*", "gpt-4o", false},
+		{"a*c", "abc", true},
+		{"a*c", "abdc", true},
+		{"a*c", "ab", false},
+		{"*", "anything/with-slash", true},
+		{"deep*chat", "deepseek-chat", true},
+		{"exact", "exact", true},
+		{"exact", "exactly", false},
+		// '*' must span '/' (unlike path.Match)
+		{"*chat*", "provider/deepseek-chat", true},
+	}
+	for _, c := range cases {
+		if got := globMatch(c.pattern, c.name); got != c.want {
+			t.Errorf("globMatch(%q, %q) = %v, want %v", c.pattern, c.name, got, c.want)
+		}
 	}
 }

@@ -64,15 +64,43 @@ func GetPricing(c *gin.Context) {
 		}
 	}
 
+	// Resolve the per-model discount that billing would actually apply for this
+	// user's group, so downstream catalogs (Hermes /pricing/catalog) display the
+	// same effective price/discount as settle time. Only configured (>0) models
+	// are emitted; absence means "fall back to group_ratio" — mirroring the
+	// billing sentinel in relay/helper/price.go (Hermerz/Hermes#127).
+	modelDiscount := map[string]float64{}
+	// Token models whose model_ratio is UNCONFIGURED (fell back to the default
+	// sentinel) — downstream shows "price pending" instead of the bogus fallback
+	// price. Uses GetModelRatio's authoritative configured flag, NOT the numeric
+	// value: a real model (e.g. gpt-4.5-preview) is legitimately 37.5 (#127).
+	unpricedModels := []string{}
+	for _, p := range pricing {
+		if d := ratio_setting.LookupUserGroupDiscount(group, p.ModelName); d > 0 {
+			modelDiscount[p.ModelName] = d
+		}
+		if p.QuotaType == 1 {
+			continue // per-call models are priced via model_price, not model_ratio
+		}
+		// Use map membership (NOT GetModelRatio's success flag, which returns
+		// SelfUseModeEnabled on miss and would mislabel unpriced models as priced
+		// in self-use mode).
+		if !ratio_setting.IsModelRatioConfigured(p.ModelName) {
+			unpricedModels = append(unpricedModels, p.ModelName)
+		}
+	}
+
 	c.JSON(200, gin.H{
-		"success":            true,
-		"data":               pricing,
-		"vendors":            model.GetVendors(),
-		"group_ratio":        groupRatio,
-		"usable_group":       usableGroup,
-		"supported_endpoint": model.GetSupportedEndpointMap(),
-		"auto_groups":        service.GetUserAutoGroup(group),
-		"pricing_version":    "a42d372ccf0b5dd13ecf71203521f9d2",
+		"success":                   true,
+		"data":                      pricing,
+		"vendors":                   model.GetVendors(),
+		"group_ratio":               groupRatio,
+		"user_group_model_discount": modelDiscount,
+		"model_ratio_unconfigured":  unpricedModels,
+		"usable_group":              usableGroup,
+		"supported_endpoint":        model.GetSupportedEndpointMap(),
+		"auto_groups":               service.GetUserAutoGroup(group),
+		"pricing_version":           "a42d372ccf0b5dd13ecf71203521f9d2",
 	})
 }
 
