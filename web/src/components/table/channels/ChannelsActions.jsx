@@ -32,6 +32,8 @@ const ChannelsActions = ({
   enableBatchDelete,
   batchDeleteChannels,
   setShowBatchSetTag,
+  setShowBatchGroup,
+  setBatchGroupAction,
   testAllChannels,
   fixChannelsAbilities,
   updateAllChannelsBalance,
@@ -88,6 +90,32 @@ const ChannelsActions = ({
             className='w-full md:w-auto'
           >
             {t('批量设置标签')}
+          </Button>
+
+          <Button
+            size='small'
+            disabled={!enableBatchDelete}
+            type='tertiary'
+            onClick={() => {
+              setBatchGroupAction('add');
+              setShowBatchGroup(true);
+            }}
+            className='w-full md:w-auto'
+          >
+            {t('批量添加分组')}
+          </Button>
+
+          <Button
+            size='small'
+            disabled={!enableBatchDelete}
+            type='tertiary'
+            onClick={() => {
+              setBatchGroupAction('remove');
+              setShowBatchGroup(true);
+            }}
+            className='w-full md:w-auto'
+          >
+            {t('批量删除分组')}
           </Button>
 
           <Dropdown

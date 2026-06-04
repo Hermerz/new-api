@@ -35,7 +35,7 @@ type Channel struct {
 	Balance            float64 `json:"balance"` // in USD
 	BalanceUpdatedTime int64   `json:"balance_updated_time" gorm:"bigint"`
 	Models             string  `json:"models"`
-	Group              string  `json:"group" gorm:"type:varchar(64);default:'default'"`
+	Group              string  `json:"group" gorm:"type:varchar(128);default:'default'"`
 	UsedQuota          int64   `json:"used_quota" gorm:"bigint;default:0"`
 	ModelMapping       *string `json:"model_mapping" gorm:"type:text"`
 	//MaxInputTokens     *int    `json:"max_input_tokens" gorm:"default:0"`
@@ -955,6 +955,113 @@ func BatchSetChannelTag(ids []int, tag *string) error {
 
 	// 提交事务
 	return tx.Commit().Error
+}
+
+// BatchAddChannelGroup appends group to each channel's comma-separated group
+// list (dedup), then rebuilds abilities. Channels already in the group are
+// skipped. Mirrors BatchSetChannelTag.
+func BatchAddChannelGroup(ids []int, group string) (int, error) {
+	group = strings.TrimSpace(group)
+	if group == "" {
+		return 0, errors.New("分组不能为空")
+	}
+
+	tx := DB.Begin()
+	if tx.Error != nil {
+		return 0, tx.Error
+	}
+
+	channels, err := GetChannelsByIds(ids)
+	if err != nil {
+		tx.Rollback()
+		return 0, err
+	}
+
+	changed := 0
+	for _, channel := range channels {
+		groups := channel.GetGroups()
+		exists := false
+		for _, g := range groups {
+			if g == group {
+				exists = true
+				break
+			}
+		}
+		if exists {
+			continue
+		}
+		newGroup := strings.Join(append(groups, group), ",")
+		if err = tx.Model(&Channel{}).Where("id = ?", channel.Id).Update("group", newGroup).Error; err != nil {
+			tx.Rollback()
+			return 0, err
+		}
+		channel.Group = newGroup
+		if err = channel.UpdateAbilities(tx); err != nil {
+			tx.Rollback()
+			return 0, err
+		}
+		changed++
+	}
+
+	if err = tx.Commit().Error; err != nil {
+		return 0, err
+	}
+	return changed, nil
+}
+
+// BatchRemoveChannelGroup removes group from each channel's group list, then
+// rebuilds abilities. Channels not in the group are skipped; a channel whose
+// only group is being removed is also skipped (a channel with no group serves
+// nothing).
+func BatchRemoveChannelGroup(ids []int, group string) (int, error) {
+	group = strings.TrimSpace(group)
+	if group == "" {
+		return 0, errors.New("分组不能为空")
+	}
+
+	tx := DB.Begin()
+	if tx.Error != nil {
+		return 0, tx.Error
+	}
+
+	channels, err := GetChannelsByIds(ids)
+	if err != nil {
+		tx.Rollback()
+		return 0, err
+	}
+
+	changed := 0
+	for _, channel := range channels {
+		groups := channel.GetGroups()
+		newGroups := make([]string, 0, len(groups))
+		found := false
+		for _, g := range groups {
+			if g == group {
+				found = true
+				continue
+			}
+			newGroups = append(newGroups, g)
+		}
+		if !found || len(newGroups) == 0 {
+			continue
+		}
+		newGroup := strings.Join(newGroups, ",")
+		if err = tx.Model(&Channel{}).Where("id = ?", channel.Id).Update("group", newGroup).Error; err != nil {
+			tx.Rollback()
+			return 0, err
+		}
+		channel.Group = newGroup
+		if err = channel.UpdateAbilities(tx); err != nil {
+			tx.Rollback()
+			return 0, err
+		}
+		changed++
+	}
+
+	if err = tx.Commit().Error; err != nil {
+		return 0, err
+	}
+	return changed, nil
 }
 
 // CountAllChannels returns total channels in DB

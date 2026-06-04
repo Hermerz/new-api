@@ -64,6 +64,9 @@ export const useChannelsData = () => {
   const [enableTagMode, setEnableTagMode] = useState(false);
   const [showBatchSetTag, setShowBatchSetTag] = useState(false);
   const [batchSetTagValue, setBatchSetTagValue] = useState('');
+  const [showBatchGroup, setShowBatchGroup] = useState(false);
+  const [batchGroupValue, setBatchGroupValue] = useState('');
+  const [batchGroupAction, setBatchGroupAction] = useState('add'); // 'add' | 'remove'
   const [compactMode, setCompactMode] = useTableCompactMode('channels');
 
   // Column visibility states
@@ -712,6 +715,37 @@ export const useChannelsData = () => {
     }
   };
 
+  // Batch add/remove a group to/from selected channels.
+  const batchChannelGroup = async () => {
+    if (selectedChannels.length === 0) {
+      showError(t('请先选择渠道！'));
+      return;
+    }
+    if (batchGroupValue === '') {
+      showError(t('分组不能为空！'));
+      return;
+    }
+    const ids = selectedChannels.map((channel) => channel.id);
+    const url =
+      batchGroupAction === 'remove'
+        ? '/api/channel/batch/group/remove'
+        : '/api/channel/batch/group/add';
+    const res = await API.post(url, { ids, group: batchGroupValue });
+    if (res.data.success) {
+      showSuccess(
+        (batchGroupAction === 'remove'
+          ? t('已为 ${count} 个渠道移除分组！')
+          : t('已为 ${count} 个渠道添加分组！')
+        ).replace('${count}', res.data.data),
+      );
+      await refresh();
+      setShowBatchGroup(false);
+      setBatchGroupValue('');
+    } else {
+      showError(res.data.message);
+    }
+  };
+
   const batchDeleteChannels = async () => {
     if (selectedChannels.length === 0) {
       showError(t('请先选择要删除的通道！'));
@@ -1183,6 +1217,13 @@ export const useChannelsData = () => {
     setShowBatchSetTag,
     batchSetTagValue,
     setBatchSetTagValue,
+    showBatchGroup,
+    setShowBatchGroup,
+    batchGroupValue,
+    setBatchGroupValue,
+    batchGroupAction,
+    setBatchGroupAction,
+    batchChannelGroup,
 
     // Column states
     visibleColumns,

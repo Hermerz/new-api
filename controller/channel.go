@@ -805,8 +805,9 @@ func EditTagChannels(c *gin.Context) {
 }
 
 type ChannelBatch struct {
-	Ids []int   `json:"ids"`
-	Tag *string `json:"tag"`
+	Ids   []int   `json:"ids"`
+	Tag   *string `json:"tag"`
+	Group string  `json:"group"`
 }
 
 func DeleteChannelBatch(c *gin.Context) {
@@ -1110,6 +1111,54 @@ func BatchSetChannelTag(c *gin.Context) {
 		"success": true,
 		"message": "",
 		"data":    len(channelBatch.Ids),
+	})
+	return
+}
+
+func BatchAddChannelGroup(c *gin.Context) {
+	channelBatch := ChannelBatch{}
+	err := c.ShouldBindJSON(&channelBatch)
+	if err != nil || len(channelBatch.Ids) == 0 || strings.TrimSpace(channelBatch.Group) == "" {
+		c.JSON(http.StatusOK, gin.H{
+			"success": false,
+			"message": "参数错误",
+		})
+		return
+	}
+	changed, err := model.BatchAddChannelGroup(channelBatch.Ids, channelBatch.Group)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	model.InitChannelCache()
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "",
+		"data":    changed,
+	})
+	return
+}
+
+func BatchRemoveChannelGroup(c *gin.Context) {
+	channelBatch := ChannelBatch{}
+	err := c.ShouldBindJSON(&channelBatch)
+	if err != nil || len(channelBatch.Ids) == 0 || strings.TrimSpace(channelBatch.Group) == "" {
+		c.JSON(http.StatusOK, gin.H{
+			"success": false,
+			"message": "参数错误",
+		})
+		return
+	}
+	changed, err := model.BatchRemoveChannelGroup(channelBatch.Ids, channelBatch.Group)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	model.InitChannelCache()
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "",
+		"data":    changed,
 	})
 	return
 }
