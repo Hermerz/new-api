@@ -107,6 +107,17 @@ var QuotaForInvitee = 0
 var ChannelDisableThreshold = 5.0
 var AutomaticDisableChannelEnabled = false
 var AutomaticEnableChannelEnabled = false
+
+// ChannelDisableRetryTimes is the number of extra immediate retries the health
+// checker performs after a probe fails before it actually disables the channel.
+// 0 keeps the legacy behavior (disable on the first failed probe).
+var ChannelDisableRetryTimes = 0
+
+// ChannelTestProbeTimeout caps each health-check probe (unit: second). 0 means
+// no independent timeout (legacy behavior — bounded only by RELAY_TIMEOUT).
+// Should be set >= ChannelDisableThreshold so a hung upstream is cut off and
+// still counts as a response-time failure.
+var ChannelTestProbeTimeout = 0
 var QuotaRemindThreshold = 1000
 var PreConsumedQuota = 500
 

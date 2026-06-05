@@ -2,6 +2,7 @@ package controller
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -56,7 +57,7 @@ func normalizeChannelTestEndpoint(channel *model.Channel, modelName, endpointTyp
 	return normalized
 }
 
-func testChannel(channel *model.Channel, testModel string, endpointType string, isStream bool) testResult {
+func testChannel(channel *model.Channel, testModel string, endpointType string, isStream bool, probeTimeout time.Duration) testResult {
 	tik := time.Now()
 	var unsupportedTestChannelTypes = []int{
 		constant.ChannelTypeMidjourney,
@@ -140,6 +141,14 @@ func testChannel(channel *model.Channel, testModel string, endpointType string, 
 		URL:    &url.URL{Path: requestPath}, // 使用动态路径
 		Body:   nil,
 		Header: make(http.Header),
+	}
+
+	// Apply an independent probe timeout (health-check retries). doRequest
+	// propagates this context onto the outbound request when info.IsChannelTest.
+	if probeTimeout > 0 {
+		ctx, cancel := context.WithTimeout(context.Background(), probeTimeout)
+		defer cancel()
+		c.Request = c.Request.WithContext(ctx)
 	}
 
 	cache, err := model.GetUserCache(1)
@@ -755,7 +764,7 @@ func TestChannel(c *gin.Context) {
 	endpointType := c.Query("endpoint_type")
 	isStream, _ := strconv.ParseBool(c.Query("stream"))
 	tik := time.Now()
-	result := testChannel(channel, testModel, endpointType, isStream)
+	result := testChannel(channel, testModel, endpointType, isStream, 0)
 	if result.localErr != nil {
 		resp := gin.H{
 			"success": false,
@@ -816,30 +825,48 @@ func testAllChannels(notify bool) error {
 			testAllChannelsLock.Unlock()
 		}()
 
+		probeTimeout := time.Duration(common.ChannelTestProbeTimeout) * time.Second
+		retryTimes := common.ChannelDisableRetryTimes
+		if retryTimes < 0 {
+			retryTimes = 0
+		}
+
+		// probeOnce runs a single health-check probe and applies the existing
+		// disable rules (ShouldDisableChannel + response-time threshold). It is
+		// the unit retried by the loop below.
+		probeOnce := func(channel *model.Channel) (shouldBan bool, effErr *types.NewAPIError, result testResult, milliseconds int64) {
+			tik := time.Now()
+			result = testChannel(channel, "", "", false, probeTimeout)
+			milliseconds = time.Since(tik).Milliseconds()
+
+			effErr = result.newAPIError
+			// request error disables the channel
+			if effErr != nil {
+				shouldBan = service.ShouldDisableChannel(channel.Type, result.newAPIError)
+			}
+			// 当错误检查通过，才检查响应时间
+			if common.AutomaticDisableChannelEnabled && !shouldBan {
+				if milliseconds > disableThreshold {
+					err := fmt.Errorf("响应时间 %.2fs 超过阈值 %.2fs", float64(milliseconds)/1000.0, float64(disableThreshold)/1000.0)
+					effErr = types.NewOpenAIError(err, types.ErrorCodeChannelResponseTimeExceeded, http.StatusRequestTimeout)
+					shouldBan = true
+				}
+			}
+			return
+		}
+
 		for _, channel := range channels {
 			if channel.Status == common.ChannelStatusManuallyDisabled {
 				continue
 			}
 			isChannelEnabled := channel.Status == common.ChannelStatusEnabled
-			tik := time.Now()
-			result := testChannel(channel, "", "", false)
-			tok := time.Now()
-			milliseconds := tok.Sub(tik).Milliseconds()
 
-			shouldBanChannel := false
-			newAPIError := result.newAPIError
-			// request error disables the channel
-			if newAPIError != nil {
-				shouldBanChannel = service.ShouldDisableChannel(channel.Type, result.newAPIError)
-			}
-
-			// 当错误检查通过，才检查响应时间
-			if common.AutomaticDisableChannelEnabled && !shouldBanChannel {
-				if milliseconds > disableThreshold {
-					err := fmt.Errorf("响应时间 %.2fs 超过阈值 %.2fs", float64(milliseconds)/1000.0, float64(disableThreshold)/1000.0)
-					newAPIError = types.NewOpenAIError(err, types.ErrorCodeChannelResponseTimeExceeded, http.StatusRequestTimeout)
-					shouldBanChannel = true
-				}
+			shouldBanChannel, newAPIError, result, milliseconds := probeOnce(channel)
+			// Immediate retry: only disable when the failure persists across
+			// ChannelDisableRetryTimes consecutive extra probes. Any success aborts.
+			for attempt := 0; shouldBanChannel && attempt < retryTimes; attempt++ {
+				time.Sleep(common.RequestInterval)
+				shouldBanChannel, newAPIError, result, milliseconds = probeOnce(channel)
 			}
 
 			// disable channel

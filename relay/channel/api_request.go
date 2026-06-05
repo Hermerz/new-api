@@ -537,6 +537,14 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
 		}
 	}
 
+	// Channel tests build their own request via http.NewRequest, which carries a
+	// background context and therefore ignores any deadline set on the inbound
+	// gin context. Propagate it here (test path only) so the health checker's
+	// independent probe timeout can actually cancel a hung upstream request.
+	if info.IsChannelTest && c.Request != nil {
+		req = req.WithContext(c.Request.Context())
+	}
+
 	resp, err := client.Do(req)
 	if err != nil {
 		logger.LogError(c, "do request failed: "+err.Error())
