@@ -46,11 +46,30 @@ func GetPricing(c *gin.Context) {
 		user, err := model.GetUserCache(userId.(int))
 		if err == nil {
 			group = user.Group
-			for g := range groupRatio {
-				ratio, ok := ratio_setting.GetGroupGroupRatio(group, g)
-				if ok {
-					groupRatio[g] = ratio
-				}
+		}
+	}
+
+	// Anonymous callers may request a specific PUBLIC group's effective pricing
+	// via ?group=. Only groups in the publicly-usable set (GetUserUsableGroups(""))
+	// are honored — an unknown/private group is silently ignored (fall back to the
+	// anonymous base), so no private pricing can leak. Pricing itself is non-secret;
+	// this public-group validation is the guard (Hermerz/Hermes#120).
+	if group == "" {
+		if reqGroup := c.Query("group"); reqGroup != "" {
+			if _, ok := service.GetUserUsableGroups("")[reqGroup]; ok {
+				group = reqGroup
+			}
+		}
+	}
+
+	// Recompute group_ratio for the resolved group (authed user OR public param
+	// group). GetGroupGroupRatio returns the per-(userGroup,usingGroup) override
+	// when configured; otherwise the base group_ratio is kept.
+	if group != "" {
+		for g := range groupRatio {
+			ratio, ok := ratio_setting.GetGroupGroupRatio(group, g)
+			if ok {
+				groupRatio[g] = ratio
 			}
 		}
 	}
