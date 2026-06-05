@@ -195,7 +195,13 @@ func SyncOptions(frequency int) {
 }
 
 func UpdateOption(key string, value string) error {
-	// Save to database first
+	// Validate + apply to the in-memory config FIRST (#129). A bad layered config
+	// must not reach the options table — if it did, the save would return success
+	// while the next restart's LoadFromDB silently dropped it back to default.
+	if err := updateOptionMap(key, value); err != nil {
+		return err
+	}
+	// Only persist once the value has been accepted.
 	option := Option{
 		Key: key,
 	}
@@ -205,18 +211,27 @@ func UpdateOption(key string, value string) error {
 	// Save is a combination function.
 	// If save value does not contain primary key, it will execute Create,
 	// otherwise it will execute Update (with all fields).
-	DB.Save(&option)
-	// Update OptionMap
-	return updateOptionMap(key, value)
+	return DB.Save(&option).Error
 }
 
 func updateOptionMap(key string, value string) (err error) {
 	common.OptionMapRWMutex.Lock()
 	defer common.OptionMapRWMutex.Unlock()
+	oldValue, hadOld := common.OptionMap[key]
 	common.OptionMap[key] = value
 
 	// 检查是否是模型配置 - 使用更规范的方式处理
-	if handleConfigUpdate(key, value) {
+	if handled, herr := handleConfigUpdate(key, value); handled {
+		if herr != nil {
+			// Validation failed — roll back the in-memory raw value so OptionMap
+			// stays consistent with the (unchanged) typed config and the DB (#129).
+			if hadOld {
+				common.OptionMap[key] = oldValue
+			} else {
+				delete(common.OptionMap, key)
+			}
+			return herr
+		}
 		return nil // 已由配置系统处理
 	}
 
@@ -516,10 +531,10 @@ func updateOptionMap(key string, value string) (err error) {
 }
 
 // handleConfigUpdate 处理分层配置更新，返回是否已处理
-func handleConfigUpdate(key, value string) bool {
+func handleConfigUpdate(key, value string) (bool, error) {
 	parts := strings.SplitN(key, ".", 2)
 	if len(parts) != 2 {
-		return false // 不是分层配置
+		return false, nil // 不是分层配置
 	}
 
 	configName := parts[0]
@@ -528,14 +543,18 @@ func handleConfigUpdate(key, value string) bool {
 	// 获取配置对象
 	cfg := config.GlobalConfig.Get(configName)
 	if cfg == nil {
-		return false // 未注册的配置
+		return false, nil // 未注册的配置
 	}
 
 	// 更新配置
 	configMap := map[string]string{
 		configKey: value,
 	}
-	config.UpdateConfigFromMap(cfg, configMap)
+	// 已识别为已注册的分层配置（handled=true），但若值非法则上抛解析错误，
+	// 由调用方拒绝落库（#129）。
+	if err := config.UpdateConfigFromMap(cfg, configMap); err != nil {
+		return true, err
+	}
 
 	// 特定配置的后处理
 	if configName == "performance_setting" {
@@ -543,5 +562,5 @@ func handleConfigUpdate(key, value string) bool {
 		performance_setting.UpdateAndSync()
 	}
 
-	return true // 已处理
+	return true, nil // 已处理
 }

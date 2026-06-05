@@ -2,6 +2,7 @@ package config
 
 import (
 	"encoding/json"
+	"fmt"
 	"reflect"
 	"strconv"
 	"strings"
@@ -55,11 +56,12 @@ func (cm *ConfigManager) LoadFromDB(options map[string]string) error {
 			}
 		}
 
-		// 如果找到配置项，则更新配置
-		if len(configMap) > 0 {
-			if err := updateConfigFromMap(config, configMap); err != nil {
-				common.SysError("failed to update config " + name + ": " + err.Error())
-				continue
+		// 如果找到配置项，则更新配置。Apply key-by-key so one corrupt field
+		// (e.g. a legacy bad value persisted before #129's validate-before-save)
+		// only skips itself, not every sibling field in the same config group.
+		for k, v := range configMap {
+			if err := updateConfigFromMap(config, map[string]string{k: v}); err != nil {
+				common.SysError("failed to load config " + name + "." + k + ": " + err.Error())
 			}
 		}
 	}
@@ -242,22 +244,24 @@ func updateConfigFromMap(config interface{}, configMap map[string]string) error 
 			if strValue == "null" {
 				field.Set(reflect.Zero(field.Type()))
 			} else {
-				// 如果指针是 nil，需要先初始化
-				if field.IsNil() {
-					field.Set(reflect.New(field.Type().Elem()))
+				// Unmarshal into a fresh allocation, swap in only on success — so
+				// an invalid payload can't leave a half-initialized pointer, and
+				// the error is propagated instead of silently skipped (#129).
+				newPtr := reflect.New(field.Type().Elem())
+				if err := json.Unmarshal([]byte(strValue), newPtr.Interface()); err != nil {
+					return fmt.Errorf("config field %q: invalid JSON: %w", key, err)
 				}
-				// 反序列化到指针指向的值
-				err := json.Unmarshal([]byte(strValue), field.Interface())
-				if err != nil {
-					continue
-				}
+				field.Set(newPtr)
 			}
 		case reflect.Map, reflect.Slice, reflect.Struct:
-			// 复杂类型使用JSON反序列化
-			err := json.Unmarshal([]byte(strValue), field.Addr().Interface())
-			if err != nil {
-				continue
+			// 复杂类型使用JSON反序列化。Unmarshal into a fresh value and swap on
+			// success so a bad payload can't partially mutate the live config;
+			// propagate the error instead of silently skipping (#129).
+			fresh := reflect.New(field.Type())
+			if err := json.Unmarshal([]byte(strValue), fresh.Interface()); err != nil {
+				return fmt.Errorf("config field %q: invalid JSON: %w", key, err)
 			}
+			field.Set(fresh.Elem())
 		}
 	}
 
