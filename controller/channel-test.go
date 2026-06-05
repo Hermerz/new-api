@@ -864,9 +864,16 @@ func testAllChannels(notify bool) error {
 			shouldBanChannel, newAPIError, result, milliseconds := probeOnce(channel)
 			// Immediate retry: only disable when the failure persists across
 			// ChannelDisableRetryTimes consecutive extra probes. Any success aborts.
-			for attempt := 0; shouldBanChannel && attempt < retryTimes; attempt++ {
-				time.Sleep(common.RequestInterval)
-				shouldBanChannel, newAPIError, result, milliseconds = probeOnce(channel)
+			//
+			// Single-key channels only: a multi-key channel re-selects a (possibly
+			// different) key on each probe, so retrying could mask the originally
+			// failing key (key A fails → retry hits healthy key B → A never
+			// disabled). Multi-key channels keep their immediate per-key disable.
+			if !channel.ChannelInfo.IsMultiKey {
+				for attempt := 0; shouldBanChannel && attempt < retryTimes; attempt++ {
+					time.Sleep(common.RequestInterval)
+					shouldBanChannel, newAPIError, result, milliseconds = probeOnce(channel)
+				}
 			}
 
 			// disable channel

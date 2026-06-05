@@ -117,6 +117,11 @@ var ChannelDisableRetryTimes = 0
 // no independent timeout (legacy behavior — bounded only by RELAY_TIMEOUT).
 // Should be set >= ChannelDisableThreshold so a hung upstream is cut off and
 // still counts as a response-time failure.
+//
+// Coverage: this cancels probes that go through the shared HTTP relay client
+// (all OpenAI/Claude/Gemini-style channels). Provider test paths that do
+// upstream I/O outside that client (e.g. a websocket opened in DoResponse) are
+// NOT bounded by this option and remain limited only by RELAY_TIMEOUT.
 var ChannelTestProbeTimeout = 0
 var QuotaRemindThreshold = 1000
 var PreConsumedQuota = 500
