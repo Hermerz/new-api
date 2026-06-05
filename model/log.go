@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -350,7 +351,17 @@ func GetAllLogs(logType int, startTimestamp int64, endTimestamp int64, modelName
 
 const logSearchCountLimit = 10000
 
-func GetUserLogs(userId int, logType int, startTimestamp int64, endTimestamp int64, modelName string, tokenName string, startIdx int, num int, group string, requestId string) (logs []*Log, total int64, err error) {
+// escapeLikeLiteral escapes a user string so it matches literally inside a
+// LIKE/ILIKE pattern with ESCAPE '!' (% _ and the escape char itself). The
+// caller wraps the result in %...% for a contains match.
+func escapeLikeLiteral(s string) string {
+	s = strings.ReplaceAll(s, "!", "!!")
+	s = strings.ReplaceAll(s, "%", "!%")
+	s = strings.ReplaceAll(s, "_", "!_")
+	return s
+}
+
+func GetUserLogs(userId int, logType int, startTimestamp int64, endTimestamp int64, modelName string, tokenName string, search string, startIdx int, num int, group string, requestId string) (logs []*Log, total int64, err error) {
 	var tx *gorm.DB
 	if logType == LogTypeUnknown {
 		tx = LOG_DB.Where("logs.user_id = ?", userId)
@@ -367,6 +378,18 @@ func GetUserLogs(userId int, logType int, startTimestamp int64, endTimestamp int
 	}
 	if tokenName != "" {
 		tx = tx.Where("logs.token_name = ?", tokenName)
+	}
+	// Unified search box: contains-match across model_name OR token_name,
+	// case-insensitive. Always scoped by user_id above, so the leading-wildcard
+	// LIKE only scans this user's rows (Hermerz/Hermes#110).
+	if s := strings.TrimSpace(search); s != "" {
+		pat := "%" + escapeLikeLiteral(s) + "%"
+		if common.UsingPostgreSQL {
+			tx = tx.Where("(logs.model_name ILIKE ? ESCAPE '!' OR logs.token_name ILIKE ? ESCAPE '!')", pat, pat)
+		} else {
+			// MySQL/SQLite LIKE is case-insensitive by default collation.
+			tx = tx.Where("(logs.model_name LIKE ? ESCAPE '!' OR logs.token_name LIKE ? ESCAPE '!')", pat, pat)
+		}
 	}
 	if requestId != "" {
 		tx = tx.Where("logs.request_id = ?", requestId)
