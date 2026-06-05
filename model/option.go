@@ -1,6 +1,7 @@
 package model
 
 import (
+	"fmt"
 	"strconv"
 	"strings"
 	"time"
@@ -186,6 +187,22 @@ func loadOptionsFromDatabase() {
 			common.SysLog("failed to update option map: " + err.Error())
 		}
 	}
+	// All values are final here — order-independent, no false positives.
+	warnIfChannelProbeTimeoutMisconfigured()
+}
+
+// warnIfChannelProbeTimeoutMisconfigured surfaces a misconfiguration where the
+// independent health-check probe timeout is shorter than the response-time
+// disable threshold: a hung upstream would be cut off before it counts as a
+// slow-response failure and could therefore never be auto-disabled.
+func warnIfChannelProbeTimeoutMisconfigured() {
+	pt := common.ChannelTestProbeTimeout
+	th := common.ChannelDisableThreshold
+	if pt > 0 && float64(pt) < th {
+		common.SysLog(fmt.Sprintf(
+			"WARNING: ChannelTestProbeTimeout (%ds) < ChannelDisableThreshold (%.2fs); a hung upstream is cut off before it counts as a response-time failure and may never be auto-disabled. Set ChannelTestProbeTimeout >= ChannelDisableThreshold.",
+			pt, th))
+	}
 }
 
 func SyncOptions(frequency int) {
@@ -202,6 +219,11 @@ func UpdateOption(key string, value string) error {
 	// while the next restart's LoadFromDB silently dropped it back to default.
 	if err := updateOptionMap(key, value); err != nil {
 		return err
+	}
+	// Both typed values are final in memory now — surface a probe-timeout /
+	// disable-threshold misconfiguration explicitly (no per-key ordering issue).
+	if key == "ChannelTestProbeTimeout" || key == "ChannelDisableThreshold" {
+		warnIfChannelProbeTimeoutMisconfigured()
 	}
 	// Only persist once the value has been accepted.
 	option := Option{
