@@ -244,19 +244,25 @@ func updateConfigFromMap(config interface{}, configMap map[string]string) error 
 			if strValue == "null" {
 				field.Set(reflect.Zero(field.Type()))
 			} else {
-				// Unmarshal into a fresh allocation, swap in only on success — so
-				// an invalid payload can't leave a half-initialized pointer, and
-				// the error is propagated instead of silently skipped (#129).
-				newPtr := reflect.New(field.Type().Elem())
-				if err := json.Unmarshal([]byte(strValue), newPtr.Interface()); err != nil {
+				// Unmarshal IN PLACE into the existing pointer (init if nil). Some
+				// configs register a field that points to a shared package-level
+				// store and rely on the type's own UnmarshalJSON to swap contents
+				// in place; replacing the pointer here would orphan that store and
+				// leave it empty (this regressed user_group_model_discount loading
+				// — Hermerz/Hermes#127). Atomicity on a bad value is the field
+				// type's responsibility; we only propagate the parse error (#129).
+				if field.IsNil() {
+					field.Set(reflect.New(field.Type().Elem()))
+				}
+				if err := json.Unmarshal([]byte(strValue), field.Interface()); err != nil {
 					return fmt.Errorf("config field %q: invalid JSON: %w", key, err)
 				}
-				field.Set(newPtr)
 			}
 		case reflect.Map, reflect.Slice, reflect.Struct:
-			// 复杂类型使用JSON反序列化。Unmarshal into a fresh value and swap on
-			// success so a bad payload can't partially mutate the live config;
-			// propagate the error instead of silently skipping (#129).
+			// Value-typed complex fields (NOT shared-store pointers): unmarshal into
+			// a fresh value and swap on success, so a malformed payload can't
+			// partially mutate the live config. Only the Ptr case needs in-place
+			// (shared store) — see its note. Propagate the parse error (#129).
 			fresh := reflect.New(field.Type())
 			if err := json.Unmarshal([]byte(strValue), fresh.Interface()); err != nil {
 				return fmt.Errorf("config field %q: invalid JSON: %w", key, err)
