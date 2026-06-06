@@ -12,10 +12,16 @@ type RWMap[K comparable, V any] struct {
 }
 
 func (m *RWMap[K, V]) UnmarshalJSON(b []byte) error {
+	// Atomic: parse into a temp map first and swap in only on success, so a
+	// malformed payload can't leave the live map empty (Hermerz/Hermes#134).
+	tmp := make(map[K]V)
+	if err := common.Unmarshal(b, &tmp); err != nil {
+		return err
+	}
 	m.mutex.Lock()
 	defer m.mutex.Unlock()
-	m.data = make(map[K]V)
-	return common.Unmarshal(b, &m.data)
+	m.data = tmp
+	return nil
 }
 
 func (m *RWMap[K, V]) MarshalJSON() ([]byte, error) {
@@ -75,22 +81,33 @@ func (m *RWMap[K, V]) Len() int {
 }
 
 func LoadFromJsonString[K comparable, V any](m *RWMap[K, V], jsonStr string) error {
+	// Atomic: swap in only on a successful parse (Hermerz/Hermes#134).
+	tmp := make(map[K]V)
+	if err := common.Unmarshal([]byte(jsonStr), &tmp); err != nil {
+		return err
+	}
 	m.mutex.Lock()
 	defer m.mutex.Unlock()
-	m.data = make(map[K]V)
-	return common.Unmarshal([]byte(jsonStr), &m.data)
+	m.data = tmp
+	return nil
 }
 
 // LoadFromJsonStringWithCallback loads a JSON string into the RWMap and calls the callback on success.
 func LoadFromJsonStringWithCallback[K comparable, V any](m *RWMap[K, V], jsonStr string, onSuccess func()) error {
+	// Atomic: parse first; only swap + fire the callback on success, so a bad
+	// payload leaves the live map untouched (Hermerz/Hermes#134). onSuccess runs
+	// under the lock, matching the prior behavior.
+	tmp := make(map[K]V)
+	if err := common.Unmarshal([]byte(jsonStr), &tmp); err != nil {
+		return err
+	}
 	m.mutex.Lock()
 	defer m.mutex.Unlock()
-	m.data = make(map[K]V)
-	err := common.Unmarshal([]byte(jsonStr), &m.data)
-	if err == nil && onSuccess != nil {
+	m.data = tmp
+	if onSuccess != nil {
 		onSuccess()
 	}
-	return err
+	return nil
 }
 
 // MarshalJSONString returns the JSON string representation of the RWMap.
