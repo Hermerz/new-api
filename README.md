@@ -54,6 +54,8 @@
 
 ## 📝 Project Description
 
+New API is an open-source, next-generation LLM gateway and AI asset management system that provides unified access to 40+ upstream AI providers along with user management, billing, and rate limiting.
+
 > [!IMPORTANT]
 > - This project is for personal learning purposes only, with no guarantee of stability or technical support
 > - Users must comply with OpenAI's [Terms of Use](https://openai.com/policies/terms-of-use) and **applicable laws and regulations**, and must not use it for illegal purposes
