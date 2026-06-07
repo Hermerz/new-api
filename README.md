@@ -6,6 +6,8 @@
 
 🍥 **Next-Generation LLM Gateway and AI Asset Management System**
 
+New API is an open-source LLM gateway and AI asset management system that provides unified access to 40+ upstream AI providers along with user management, billing, and rate limiting.
+
 <p align="center">
   <a href="./README.zh_CN.md">简体中文</a> |
   <a href="./README.zh_TW.md">繁體中文</a> |
@@ -53,8 +55,6 @@
 </div>
 
 ## 📝 Project Description
-
-New API is an open-source, next-generation LLM gateway and AI asset management system that provides unified access to 40+ upstream AI providers along with user management, billing, and rate limiting.
 
 > [!IMPORTANT]
 > - This project is for personal learning purposes only, with no guarantee of stability or technical support
