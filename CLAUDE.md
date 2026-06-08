@@ -37,6 +37,18 @@ web/           — React frontend
   web/src/i18n/  — Frontend internationalization (i18next, zh/en/fr/ru/ja/vi)
 ```
 
+## Channel Selection / Priority Semantics
+
+Channel `priority` is **higher number = higher priority** (descending). Selection is **tiered**, not a flat sort:
+
+1. Only candidates in the **highest `priority` tier** are considered first — `MAX(priority)` subquery (`model/ability.go:133`), ordered `priority DESC, weight DESC` (`model/ability.go:74`, `model/channel_cache.go:255`).
+2. Within a tier, channels are picked by **`weight`-weighted random**.
+3. Lower tiers are only used on retry / when the higher tier is exhausted or failing.
+
+So a higher tier is never load-balanced against a lower one — it must be drained first.
+
+> ⚠️ **Opposite convention elsewhere — don't mix them up:** In **FGP-C2API** (the `reverse-fpg-*` upstream gateway), **account** `priority` is the reverse — **smaller number = higher priority**. new-api channel priority (bigger=higher) ≠ FGP account priority (smaller=higher).
+
 ## Internationalization (i18n)
 
 ### Backend (`i18n/`)
