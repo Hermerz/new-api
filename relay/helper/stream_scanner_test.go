@@ -614,19 +614,23 @@ func TestStreamScannerHandler_StreamStatus_InitializedIfNil(t *testing.T) {
 	assert.NotNil(t, info.StreamStatus)
 }
 
+// scanner 对每次调用无条件新建 StreamStatus：渠道重试时上一次尝试的
+// 错误/EndReason 不得泄漏进下一次（语义与 ResetForChannelRetry 一致）
 func TestStreamScannerHandler_StreamStatus_PreInitialized(t *testing.T) {
 	t.Parallel()
 
 	body := buildSSEBody(5)
 	c, resp, info := setupStreamTest(t, strings.NewReader(body))
 
-	info.StreamStatus = relaycommon.NewStreamStatus()
-	info.StreamStatus.RecordError("pre-existing error")
+	stale := relaycommon.NewStreamStatus()
+	stale.RecordError("error from previous channel attempt")
+	info.StreamStatus = stale
 
 	StreamScannerHandler(c, resp, info, func(data string, sr *StreamResult) {})
 
+	assert.NotSame(t, stale, info.StreamStatus, "scanner must replace pre-existing StreamStatus")
 	assert.Equal(t, relaycommon.StreamEndReasonDone, info.StreamStatus.EndReason)
-	assert.Equal(t, 1, info.StreamStatus.TotalErrorCount())
+	assert.Equal(t, 0, info.StreamStatus.TotalErrorCount(), "stale errors must not leak into the new attempt")
 }
 
 func TestStreamScannerHandler_PingInterleavesWithSlowUpstream(t *testing.T) {
