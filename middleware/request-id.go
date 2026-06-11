@@ -25,6 +25,9 @@ func RequestId() func(c *gin.Context) {
 		ctx := context.WithValue(c.Request.Context(), common.RequestIdKey, id)
 		c.Request = c.Request.WithContext(ctx)
 		c.Header(common.RequestIdKey, id)
+		// 对客户文档化的请求 ID 头。上游链路里可能有多个 new-api 实例都回
+		// X-Oneapi-Request-Id，加品牌前缀让客户能明确指认本网关这一跳
+		c.Header(common.ZetaRequestIdHeader, id)
 		c.Next()
 	}
 }

@@ -235,7 +235,6 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
 			default:
 			}
 
-			ticker.Reset(streamingTimeout)
 			data := scanner.Text()
 			if common.DebugEnabled {
 				println(data)
@@ -252,6 +251,9 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
 			if data == "" {
 				continue
 			}
+			// 只有真实数据行才算活跃：SSE 注释行（如上游 ": PING" 心跳）不能
+			// 重置空闲超时，否则上游 stall 期间的心跳会让僵尸流永不超时
+			ticker.Reset(streamingTimeout)
 			if !strings.HasPrefix(data, "[DONE]") {
 				info.SetFirstResponseTime()
 				info.ReceivedResponseCount++

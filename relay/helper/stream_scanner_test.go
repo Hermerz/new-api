@@ -688,3 +688,113 @@ func TestStreamScannerHandler_PingInterleavesWithSlowUpstream(t *testing.T) {
 	assert.GreaterOrEqual(t, pingCount, 3,
 		"expected at least 3 pings during 5s stream with 1s ping interval; got %d", pingCount)
 }
+
+// ---------- Idle timeout vs heartbeat (zombie stream fix) ----------
+
+// 上游 stall 时只发 ": PING" 注释行（new-api 系上游的心跳形态）。
+// 注释行不得重置空闲超时，否则形成永不超时的僵尸流（双向 ping 保活）。
+func TestStreamScannerHandler_CommentOnlyHeartbeatTimesOut(t *testing.T) {
+	// Not parallel: modifies global constant.StreamingTimeout
+	oldTimeout := constant.StreamingTimeout
+	constant.StreamingTimeout = 2
+	t.Cleanup(func() { constant.StreamingTimeout = oldTimeout })
+
+	pr, pw := io.Pipe()
+	go func() {
+		defer pw.Close()
+		// 持续注释心跳，远超 2s 超时窗口
+		for i := 0; i < 40; i++ {
+			fmt.Fprint(pw, ": PING\n\n")
+			time.Sleep(250 * time.Millisecond)
+		}
+	}()
+
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+
+	resp := &http.Response{Body: pr}
+	info := &relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{}}
+
+	var called atomic.Bool
+	start := time.Now()
+	done := make(chan struct{})
+	go func() {
+		StreamScannerHandler(c, resp, info, func(data string, sr *StreamResult) {
+			called.Store(true)
+		})
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(8 * time.Second):
+		t.Fatal("zombie stream: comment-only heartbeat kept the stream alive past idle timeout")
+	}
+
+	elapsed := time.Since(start)
+	assert.False(t, called.Load(), "no data lines were sent")
+	require.NotNil(t, info.StreamStatus)
+	assert.Equal(t, relaycommon.StreamEndReasonTimeout, info.StreamStatus.EndReason)
+	assert.GreaterOrEqual(t, elapsed, 2*time.Second, "should wait at least the idle timeout")
+}
+
+// 真实 data 行必须重置空闲超时：间隔 1s 的 data 流在 2s 超时下应正常完成
+func TestStreamScannerHandler_DataLinesKeepResettingIdleTimeout(t *testing.T) {
+	// Not parallel: modifies global constant.StreamingTimeout
+	oldTimeout := constant.StreamingTimeout
+	constant.StreamingTimeout = 2
+	t.Cleanup(func() { constant.StreamingTimeout = oldTimeout })
+
+	pr, pw := io.Pipe()
+	go func() {
+		defer pw.Close()
+		for i := 0; i < 4; i++ {
+			fmt.Fprintf(pw, "data: {\"id\":%d}\n", i)
+			time.Sleep(1 * time.Second)
+		}
+		fmt.Fprint(pw, "data: [DONE]\n")
+	}()
+
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+
+	resp := &http.Response{Body: pr}
+	info := &relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{}}
+
+	var count atomic.Int64
+	done := make(chan struct{})
+	go func() {
+		StreamScannerHandler(c, resp, info, func(data string, sr *StreamResult) {
+			count.Add(1)
+		})
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(15 * time.Second):
+		t.Fatal("stream did not finish")
+	}
+
+	assert.Equal(t, int64(4), count.Load())
+	require.NotNil(t, info.StreamStatus)
+	assert.Equal(t, relaycommon.StreamEndReasonDone, info.StreamStatus.EndReason)
+}
+
+// CRLF 行尾（部分上游/代理会发 \r\n）：payload 不应带 \r，行为与 LF 一致
+func TestStreamScannerHandler_CRLFLines(t *testing.T) {
+	t.Parallel()
+
+	body := "data: {\"crlf\":true}\r\ndata: [DONE]\r\n"
+	c, resp, info := setupStreamTest(t, strings.NewReader(body))
+
+	var got string
+	StreamScannerHandler(c, resp, info, func(data string, sr *StreamResult) {
+		got = data
+	})
+
+	assert.Equal(t, "{\"crlf\":true}", got)
+	assert.Equal(t, relaycommon.StreamEndReasonDone, info.StreamStatus.EndReason)
+}

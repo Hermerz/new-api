@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
@@ -96,6 +97,29 @@ type NewAPIError struct {
 	errorCode      ErrorCode
 	StatusCode     int
 	Metadata       json.RawMessage
+	// RetryAfter 是上游错误响应的 Retry-After 头原始值（仅 RelayErrorHandler 填充），
+	// 用于最终 429 时透传给客户端做退避
+	RetryAfter string
+}
+
+const maxRetryAfterSeconds = 120
+
+// RetryAfterHeaderValue 返回可透传给客户端的 Retry-After 值：数值秒数 cap 到
+// 120s（防上游离谱大值把客户端拖死），HTTP-date 等非数值格式原样透传
+func (e *NewAPIError) RetryAfterHeaderValue() string {
+	if e == nil || e.RetryAfter == "" {
+		return ""
+	}
+	if secs, err := strconv.Atoi(strings.TrimSpace(e.RetryAfter)); err == nil {
+		if secs < 0 {
+			return ""
+		}
+		if secs > maxRetryAfterSeconds {
+			return strconv.Itoa(maxRetryAfterSeconds)
+		}
+		return strconv.Itoa(secs)
+	}
+	return e.RetryAfter
 }
 
 // Unwrap enables errors.Is / errors.As to work with NewAPIError by exposing the underlying error.

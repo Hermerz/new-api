@@ -158,6 +158,9 @@ var CohereSafetySetting string
 
 const (
 	RequestIdKey = "X-Oneapi-Request-Id"
+	// 对客户文档化的请求 ID 响应头（值与 RequestIdKey 相同）；
+	// 区别于链路上其它 new-api 实例的 X-Oneapi-Request-Id
+	ZetaRequestIdHeader = "X-Zetaapi-Request-Id"
 )
 
 const (

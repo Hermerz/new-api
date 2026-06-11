@@ -84,6 +84,14 @@ func ClaudeErrorWrapperLocal(err error, code string, statusCode int) *dto.Claude
 }
 
 func RelayErrorHandler(ctx context.Context, resp *http.Response, showBodyWhenFail bool) (newApiErr *types.NewAPIError) {
+	// 上游限流时把 Retry-After 带回去，客户端才能按提示退避（最终 429 透传用）
+	if retryAfter := resp.Header.Get("Retry-After"); retryAfter != "" {
+		defer func() {
+			if newApiErr != nil {
+				newApiErr.RetryAfter = retryAfter
+			}
+		}()
+	}
 	newApiErr = types.InitOpenAIError(types.ErrorCodeBadResponseStatusCode, resp.StatusCode)
 
 	responseBody, err := io.ReadAll(resp.Body)

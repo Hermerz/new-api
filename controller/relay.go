@@ -89,6 +89,11 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		if newAPIError != nil {
 			logger.LogError(c, fmt.Sprintf("relay error: %s", newAPIError.Error()))
 			newAPIError.SetMessage(common.MessageWithRequestId(newAPIError.Error(), requestId))
+			if newAPIError.StatusCode == http.StatusTooManyRequests {
+				if retryAfter := newAPIError.RetryAfterHeaderValue(); retryAfter != "" {
+					c.Header("Retry-After", retryAfter)
+				}
+			}
 			switch relayFormat {
 			case types.RelayFormatOpenAIRealtime:
 				helper.WssError(c, ws, newAPIError.ToOpenAIError())
