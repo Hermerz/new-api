@@ -324,6 +324,8 @@ docker run --name new-api -d --restart always \
 | `PYROSCOPE_MUTEX_RATE` | Pyroscope mutex 採樣率                               | `5` |
 | `PYROSCOPE_BLOCK_RATE` | Pyroscope block 採樣率                               | `5` |
 | `HOSTNAME` | Pyroscope 標籤裡的主機名                                          | `new-api` |
+| `SENTRY_DSN` | Sentry 錯誤監控 DSN，非空時啟用錯誤上報                            | - |
+| `SENTRY_ENVIRONMENT` | Sentry 環境名稱                                       | `production` |
 
 📖 **完整配置：** [環境變數文件](https://docs.newapi.pro/zh/docs/installation/config-maintenance/environment-variables)
 
