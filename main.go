@@ -26,6 +26,8 @@ import (
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 
 	"github.com/bytedance/gopkg/util/gopool"
+	"github.com/getsentry/sentry-go"
+	sentrygin "github.com/getsentry/sentry-go/gin"
 	"github.com/gin-contrib/sessions"
 	"github.com/gin-contrib/sessions/cookie"
 	"github.com/gin-gonic/gin"
@@ -47,6 +49,25 @@ func main() {
 	if err != nil {
 		common.FatalLog("failed to initialize resources: " + err.Error())
 		return
+	}
+
+	sentryEnabled := false
+	if os.Getenv("SENTRY_DSN") != "" {
+		env := os.Getenv("SENTRY_ENVIRONMENT")
+		if env == "" {
+			env = "production"
+		}
+		err = sentry.Init(sentry.ClientOptions{
+			Dsn:         os.Getenv("SENTRY_DSN"),
+			Environment: env,
+		})
+		if err != nil {
+			common.SysError("failed to initialize sentry: " + err.Error())
+		} else {
+			sentryEnabled = true
+			defer sentry.Flush(2 * time.Second)
+			common.SysLog("sentry initialized, environment: " + env)
+		}
 	}
 
 	common.SysLog("New API " + common.Version + " started")
@@ -162,6 +183,10 @@ func main() {
 			},
 		})
 	}))
+	if sentryEnabled {
+		// Repanic: true re-raises the panic so the CustomRecovery above still returns the existing error response
+		server.Use(sentrygin.New(sentrygin.Options{Repanic: true}))
+	}
 	// This will cause SSE not to work!!!
 	//server.Use(gzip.Gzip(gzip.DefaultCompression))
 	server.Use(middleware.RequestId())
