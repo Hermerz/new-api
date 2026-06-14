@@ -33,6 +33,31 @@ func checkRedirect(req *http.Request, via []*http.Request) error {
 	return nil
 }
 
+// relayDialer returns a net.Dialer carrying the relay connection-establishment
+// timeout (RELAY_DIAL_TIMEOUT). 0 disables it (legacy: bounded only by the
+// inbound request context / RELAY_TIMEOUT).
+func relayDialer() *net.Dialer {
+	d := &net.Dialer{KeepAlive: 30 * time.Second}
+	if common.RelayDialTimeout > 0 {
+		d.Timeout = time.Duration(common.RelayDialTimeout) * time.Second
+	}
+	return d
+}
+
+// applyRelayConnTimeouts bounds connect + TLS handshake on a relay transport.
+// It only covers connection establishment, never response/streaming time, so a
+// long streaming completion is unaffected. See common.RelayDialTimeout doc.
+// When a timeout is 0 the corresponding field is left untouched so the transport
+// keeps its default behavior (truly legacy — no custom DialContext installed).
+func applyRelayConnTimeouts(t *http.Transport) {
+	if common.RelayDialTimeout > 0 {
+		t.DialContext = relayDialer().DialContext
+	}
+	if common.RelayTLSHandshakeTimeout > 0 {
+		t.TLSHandshakeTimeout = time.Duration(common.RelayTLSHandshakeTimeout) * time.Second
+	}
+}
+
 func InitHttpClient() {
 	transport := &http.Transport{
 		MaxIdleConns:        common.RelayMaxIdleConns,
@@ -40,6 +65,7 @@ func InitHttpClient() {
 		ForceAttemptHTTP2:   true,
 		Proxy:               http.ProxyFromEnvironment, // Support HTTP_PROXY, HTTPS_PROXY, NO_PROXY env vars
 	}
+	applyRelayConnTimeouts(transport)
 	if common.TLSInsecureSkipVerify {
 		transport.TLSClientConfig = common.InsecureTLSConfig
 	}
@@ -111,6 +137,7 @@ func NewProxyHttpClient(proxyURL string) (*http.Client, error) {
 			ForceAttemptHTTP2:   true,
 			Proxy:               http.ProxyURL(parsedURL),
 		}
+		applyRelayConnTimeouts(transport)
 		if common.TLSInsecureSkipVerify {
 			transport.TLSClientConfig = common.InsecureTLSConfig
 		}
@@ -139,7 +166,13 @@ func NewProxyHttpClient(proxyURL string) (*http.Client, error) {
 
 		// 创建 SOCKS5 代理拨号器
 		// proxy.SOCKS5 使用 tcp 参数，所有 TCP 连接包括 DNS 查询都将通过代理进行。行为与 socks5h 相同
-		dialer, err := proxy.SOCKS5("tcp", parsedURL.Host, auth, proxy.Direct)
+		// forward dialer 带 RELAY_DIAL_TIMEOUT(>0 时)，避免连接到 socks5 代理本身时 hang 死；
+		// 0 时退回 proxy.Direct 保持 legacy 行为。
+		var socksFwd proxy.Dialer = proxy.Direct
+		if common.RelayDialTimeout > 0 {
+			socksFwd = relayDialer()
+		}
+		dialer, err := proxy.SOCKS5("tcp", parsedURL.Host, auth, socksFwd)
 		if err != nil {
 			return nil, err
 		}
@@ -151,6 +184,9 @@ func NewProxyHttpClient(proxyURL string) (*http.Client, error) {
 			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
 				return dialer.Dial(network, addr)
 			},
+		}
+		if common.RelayTLSHandshakeTimeout > 0 {
+			transport.TLSHandshakeTimeout = time.Duration(common.RelayTLSHandshakeTimeout) * time.Second
 		}
 		if common.TLSInsecureSkipVerify {
 			transport.TLSClientConfig = common.InsecureTLSConfig

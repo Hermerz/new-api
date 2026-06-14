@@ -151,6 +151,16 @@ var RelayTimeout int // unit is second
 var RelayMaxIdleConns int
 var RelayMaxIdleConnsPerHost int
 
+// RelayDialTimeout / RelayTLSHandshakeTimeout bound connection establishment for
+// upstream relay requests (unit: second). Without these a dead/hung upstream
+// (TCP connect that never completes, or TLS that stalls) blocks the whole
+// request until the inbound context deadline, starving the candidate-exhaustive
+// failover loop (controller/relay.go) — see Hermerz/Hermes#78/#79 follow-up.
+// They only cover the connect+handshake phase, NOT response/streaming time, so a
+// long streaming completion is never affected. 0 = disabled (legacy behavior).
+var RelayDialTimeout int
+var RelayTLSHandshakeTimeout int
+
 var GeminiSafetySetting string
 
 // https://docs.cohere.com/docs/safety-modes Type; NONE/CONTEXTUAL/STRICT
