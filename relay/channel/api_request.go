@@ -545,7 +545,7 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
 		req = req.WithContext(c.Request.Context())
 	}
 
-	resp, err := client.Do(req)
+	resp, err := doRequestWithTTFB(client, req, info)
 	if err != nil {
 		logger.LogError(c, "do request failed: "+err.Error())
 		return nil, types.NewError(err, types.ErrorCodeDoRequestFailed, types.ErrOptionWithHideErrMsg("upstream error: do request failed"))
@@ -557,6 +557,63 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
 	_ = req.Body.Close()
 	_ = c.Request.Body.Close()
 	return resp, nil
+}
+
+// doRequestWithTTFB runs client.Do but, for STREAMING requests, bounds the time
+// to receive upstream response headers by common2.RelayTTFBTimeout. A dead/hung
+// upstream that finishes TCP+TLS yet never returns headers (the 2026-06-14
+// wcnbai hang) would otherwise block until the inbound context deadline and eat
+// the whole candidate-exhaustive failover budget (controller/relay.go) before
+// the next channel is tried. On timeout it returns an error — wrapped by the
+// caller as a retryable do_request_failed — so the loop fails over with budget
+// to spare. Once headers arrive the watchdog is disarmed: the child context is
+// released when the INBOUND request ends (context.AfterFunc), never mid-stream,
+// so a long streaming body is not truncated and we don't depend on every
+// downstream handler closing resp.Body. The streaming body duration is governed
+// by STREAMING_TIMEOUT, never this. Non-streaming and RelayTTFBTimeout<=0 keep
+// the plain client.Do path. Hermerz/Hermes#20.
+func doRequestWithTTFB(client *http.Client, req *http.Request, info *common.RelayInfo) (*http.Response, error) {
+	if !info.IsStream || common2.RelayTTFBTimeout <= 0 {
+		return client.Do(req)
+	}
+
+	ctx, cancel := context.WithCancel(req.Context())
+	type doResult struct {
+		resp *http.Response
+		err  error
+	}
+	ch := make(chan doResult, 1)
+	gopool.Go(func() {
+		resp, err := client.Do(req.WithContext(ctx))
+		ch <- doResult{resp, err}
+	})
+
+	timeout := time.Duration(common2.RelayTTFBTimeout) * time.Second
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+
+	select {
+	case r := <-ch:
+		if r.err != nil || r.resp == nil {
+			cancel()
+			return r.resp, r.err
+		}
+		// Headers arrived. Release the child context when the inbound request
+		// ends — not now (would truncate the stream) and not on Body.Close
+		// (some handlers don't always close it). AfterFunc also tears down a
+		// leaked upstream connection at request end.
+		context.AfterFunc(req.Context(), cancel)
+		return r.resp, nil
+	case <-timer.C:
+		cancel()  // abort the in-flight client.Do
+		r := <-ch // reap the goroutine
+		if r.resp != nil {
+			// Race: a response landed just as we timed out. We're abandoning
+			// this attempt to fail over, so close it to avoid leaking the conn.
+			_ = r.resp.Body.Close()
+		}
+		return nil, fmt.Errorf("upstream did not return response headers within %s", timeout)
+	}
 }
 
 func DoTaskApiRequest(a TaskAdaptor, c *gin.Context, info *common.RelayInfo, requestBody io.Reader) (*http.Response, error) {

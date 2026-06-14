@@ -161,6 +161,18 @@ var RelayMaxIdleConnsPerHost int
 var RelayDialTimeout int
 var RelayTLSHandshakeTimeout int
 
+// RelayTTFBTimeout bounds, for STREAMING requests only, the time to receive
+// upstream response headers (unit: second). An upstream that completes TCP+TLS
+// but never returns headers (the 2026-06-14 wcnbai hang) would otherwise block
+// until the inbound context deadline and eat the whole candidate-exhaustive
+// failover budget (controller/relay.go) before the next channel is tried. On
+// timeout the attempt fails as a retryable do_request_failed so the loop fails
+// over with budget to spare. Disarmed once headers arrive — the streaming body
+// duration is governed by STREAMING_TIMEOUT, never this. 0 = disabled.
+// Keep well above the healthy first-token tail to avoid false failover (see
+// Hermerz/Hermes#20). Non-streaming requests are unaffected.
+var RelayTTFBTimeout int
+
 var GeminiSafetySetting string
 
 // https://docs.cohere.com/docs/safety-modes Type; NONE/CONTEXTUAL/STRICT
